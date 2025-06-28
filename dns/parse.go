@@ -17,10 +17,9 @@ func ParseDNSPacket(data []byte, size int, source *net.UDPAddr) (*DNSPacket, err
 	headerBytes := buf[:12]
 	header := parseHeader(headerBytes)
 
-	questions := make([]DNSQuestion, 0, header.QDCOUNT)
-
 	curr := 12 // Start after the header
 
+	questions := make([]DNSQuestion, 0, header.QDCOUNT)
 	for range header.QDCOUNT {
 		if curr >= len(buf) {
 			return nil, fmt.Errorf("Invalid QDCOUNT: %d, but buffer length is %d", header.QDCOUNT, len(buf))
@@ -33,21 +32,46 @@ func ParseDNSPacket(data []byte, size int, source *net.UDPAddr) (*DNSPacket, err
 		curr = end
 	}
 
-	additionals := make([]DNSRecord, 0, header.ARCOUNT)
+	answers := make([]DNSRecord, 0, header.ANCOUNT)
+	for range header.ANCOUNT {
+		if curr >= len(buf) {
+			return nil, fmt.Errorf("Invalid ANCOUNT: %d, but buffer length is %d", header.ANCOUNT, len(buf))
+		}
+		answerRecord, end, err := parseRecord(buf, curr)
+		if err != nil {
+			return nil, err
+		}
+		answers = append(answers, *answerRecord)
+		curr = end
+	}
 
+	authoratives := make([]DNSRecord, 0, header.NSCOUNT)
+	for range header.NSCOUNT {
+		if curr >= len(buf) {
+			return nil, fmt.Errorf("Invalid NSCOUNT: %d, but buffer length is %d", header.NSCOUNT, len(buf))
+		}
+		authoritativeRecord, end, err := parseRecord(buf, curr)
+		if err != nil {
+			return nil, err
+		}
+		authoratives = append(authoratives, *authoritativeRecord)
+		curr = end
+	}
+
+	additionals := make([]DNSRecord, 0, header.ARCOUNT)
 	for range header.ARCOUNT {
 		if curr >= len(buf) {
 			return nil, fmt.Errorf("Invalid ARCOUNT: %d, but buffer length is %d", header.ARCOUNT, len(buf))
 		}
-		record, end, err := parseRecord(buf, curr)
+		additionalRecord, end, err := parseRecord(buf, curr)
 		if err != nil {
 			return nil, err
 		}
-		additionals = append(additionals, *record)
+		additionals = append(additionals, *additionalRecord)
 		curr = end
 	}
 
-	return &DNSPacket{Header: *header, Questions: questions, Additional: additionals}, nil
+	return &DNSPacket{Header: *header, Questions: questions, Answers: answers, Authoratives: authoratives, Additional: additionals}, nil
 }
 
 func parseHeader(headerBytes []byte) *DNSHeader {
@@ -62,7 +86,7 @@ func parseHeader(headerBytes []byte) *DNSHeader {
 	Z := (headerBytes[3] >> 6) & 0x1
 	AD := (headerBytes[3] >> 5) & 1
 	CD := (headerBytes[3] >> 4) & 1
-	RCODE := (headerBytes[3]) & 0x0F
+	RCODE := DNSResponseCode((headerBytes[3]) & 0x0F)
 
 	return &DNSHeader{
 		ID:      binary.BigEndian.Uint16(headerBytes[0:2]),
@@ -84,50 +108,48 @@ func parseHeader(headerBytes []byte) *DNSHeader {
 }
 
 func parseQuestion(question []byte, start int) (*DNSQuestion, int, error) {
-	encodedDomainName := question[start:]
-	domainName, end, err := decodeDomainName(encodedDomainName)
+	domainName, end, err := decodeDomainName(question, start, false)
 	if err != nil {
 		return nil, -1, err
 	}
 
-	if start+end+4 >= len(question) {
+	if end+4 >= len(question) {
 		return nil, -1, errors.New("Invalid question")
 	}
-	recordType := question[start+end+1 : start+end+3]
-	class := question[start+end+3 : start+end+5]
+	recordType := question[end+1 : end+3]
+	class := question[end+3 : end+5]
 	return &DNSQuestion{
 		domainName,
 		Record(binary.BigEndian.Uint16(recordType)),
 		Class(binary.BigEndian.Uint16(class)),
-	}, start + end + 5, nil
+	}, end + 5, nil
 }
 
 func parseRecord(record []byte, start int) (*DNSRecord, int, error) {
-	encodedDomainName := record[start:]
-	domainName, end, err := decodeDomainName(encodedDomainName)
+	domainName, end, err := decodeDomainName(record, start, false)
 	if err != nil {
 		return nil, -1, err
 	}
 
-	if start+end+11 > len(record) {
+	if end+11 > len(record) {
 		return nil, -1, errors.New("Invalid record")
 	}
 
-	recordType := binary.BigEndian.Uint16(record[start+end+1 : start+end+3])
-	class := binary.BigEndian.Uint16(record[start+end+3 : start+end+5])
-	ttl := binary.BigEndian.Uint32(record[start+end+5 : start+end+9])
-	rdLength := binary.BigEndian.Uint16(record[start+end+9 : start+end+11])
+	recordType := binary.BigEndian.Uint16(record[end+1 : end+3])
+	class := binary.BigEndian.Uint16(record[end+3 : end+5])
+	ttl := binary.BigEndian.Uint32(record[end+5 : end+9])
+	rdLength := binary.BigEndian.Uint16(record[end+9 : end+11])
 
-	if start+end+11+int(rdLength) > len(record) {
+	if end+11+int(rdLength) > len(record) {
 		return nil, -1, errors.New("Invalid RDATA length")
 	}
 
-	rdata := record[start+end+11 : start+end+11+int(rdLength)]
+	rdata := record[end+11 : end+11+int(rdLength)]
 	return &DNSRecord{
 		Name:  domainName,
 		Type:  Record(recordType),
 		Class: Class(class),
 		TTL:   ttl,
 		RDATA: rdata,
-	}, start + end + 11 + int(rdLength), nil
+	}, end + 11 + int(rdLength), nil
 }

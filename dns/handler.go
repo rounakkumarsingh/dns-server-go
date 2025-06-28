@@ -3,9 +3,9 @@ package dns
 import "fmt"
 
 func HandleDNSRequest(req *DNSPacket) (*DNSPacket, error) {
-	RCODE := uint8(0)
+	RCODE := DNSResponseCodeType.NoError
 	if req.Header.OPCODE != 0 {
-		RCODE = 4
+		RCODE = DNSResponseCodeType.NotImplemented
 	}
 
 	h := req.Header

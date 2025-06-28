@@ -2,6 +2,7 @@ package dns
 
 import (
 	"encoding/binary"
+	"fmt"
 )
 
 type DNSQuestion struct {
@@ -10,9 +11,9 @@ type DNSQuestion struct {
 	Class  Class
 }
 
-func (q *DNSQuestion) ToBytes() []byte {
+func (q *DNSQuestion) ToBytes(offsetMap map[string]uint, offSet uint) []byte {
 	// Encoding the domain name
-	buf := encodeDomainName(q.Domain)
+	buf := encodeDomainName(q.Domain, offsetMap, offSet)
 
 	typeBytes := make([]byte, 2)
 	classBytes := make([]byte, 2)
@@ -22,4 +23,8 @@ func (q *DNSQuestion) ToBytes() []byte {
 	buf = append(buf, typeBytes...)
 	buf = append(buf, classBytes...)
 	return buf
+}
+
+func (q *DNSQuestion) String() string {
+	return fmt.Sprintf("Domain: %s, Type: %s, Class: %s", q.Domain, q.Type, q.Class)
 }

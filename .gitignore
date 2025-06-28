@@ -30,6 +30,8 @@ go.work.sum
 # env file
 .env
 
+dns/parser_test.go
+
 # Editor/IDE
 # .idea/
 # .vscode/

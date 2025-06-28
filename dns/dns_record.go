@@ -1,6 +1,9 @@
 package dns
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"fmt"
+)
 
 type DNSRecord struct {
 	Name  string
@@ -11,8 +14,8 @@ type DNSRecord struct {
 	RDATA []byte
 }
 
-func (a *DNSRecord) ToBytes() []byte {
-	buf := encodeDomainName(a.Name)
+func (a *DNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) []byte {
+	buf := encodeDomainName(a.Name, offsetMap, offSet)
 
 	typeBytes := make([]byte, 2)
 	classBytes := make([]byte, 2)
@@ -33,12 +36,12 @@ func (a *DNSRecord) ToBytes() []byte {
 	return buf
 }
 
-func NewDNSRecord(name string, recordType Record, class Class, ttl uint32, rdata []byte) DNSRecord {
-	return DNSRecord{
-		Name:  name,
-		Type:  recordType,
-		Class: class,
-		TTL:   ttl,
-		RDATA: rdata,
-	}
+func (a *DNSRecord) String() string {
+	return fmt.Sprintf("DNS Record:\n"+
+		"  Name: %s\n"+
+		"  Type: %s\n"+
+		"  Class: %s\n"+
+		"  TTL: %d\n"+
+		"  RDATA Length: %d bytes",
+		a.Name, a.Type, a.Class, a.TTL, len(a.RDATA))
 }
