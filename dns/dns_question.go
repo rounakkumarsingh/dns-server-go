@@ -25,6 +25,6 @@ func (q *DNSQuestion) ToBytes(offsetMap map[string]uint, offSet uint) []byte {
 	return buf
 }
 
-func (q *DNSQuestion) String() string {
+func (q DNSQuestion) String() string {
 	return fmt.Sprintf("Domain: %s, Type: %s, Class: %s", q.Domain, q.Type, q.Class)
 }

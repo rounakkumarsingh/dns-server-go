@@ -56,7 +56,7 @@ func (m *DNSPacket) ToBytes() ([]byte, error) {
 	return buf, nil
 }
 
-func (m *DNSPacket) String() string {
+func (m DNSPacket) String() string {
 	result := fmt.Sprintf("DNS Packet:\n%s\n", m.Header.String())
 
 	if len(m.Questions) > 0 {

@@ -36,12 +36,20 @@ func (a *DNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) []byte {
 	return buf
 }
 
-func (a *DNSRecord) String() string {
+func (a DNSRecord) String() string {
+	rdataStr := ""
+	for i, b := range a.RDATA {
+		if i > 0 {
+			rdataStr += " "
+		}
+		rdataStr += fmt.Sprintf("%d", b)
+	}
 	return fmt.Sprintf("DNS Record:\n"+
 		"  Name: %s\n"+
 		"  Type: %s\n"+
 		"  Class: %s\n"+
 		"  TTL: %d\n"+
-		"  RDATA Length: %d bytes",
-		a.Name, a.Type, a.Class, a.TTL, len(a.RDATA))
+		"  RDATA Length: %d bytes\n"+
+		"  RDATA: % x\n",
+		a.Name, a.Type, a.Class, a.TTL, len(a.RDATA), a.RDATA)
 }

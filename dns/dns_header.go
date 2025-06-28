@@ -85,7 +85,7 @@ func (h *DNSHeader) ToBytes() ([]byte, error) {
 	return buf, nil
 }
 
-func (h *DNSHeader) String() string {
+func (h DNSHeader) String() string {
 	qrType := "Query"
 	if h.QR == 1 {
 		qrType = "Response"
