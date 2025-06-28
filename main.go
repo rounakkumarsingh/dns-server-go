@@ -3,13 +3,18 @@ package main
 import (
 	"log"
 	"net"
-
-	"github.com/rounakkumarsingh/dns-server/dns"
+	"time"
 )
 
 func main() {
+	// For stub resolver
+	dnsServerAddr, err := net.ResolveUDPAddr("udp", "8.8.8.8:53")
+	if err != nil {
+		log.Println("Failed to resolve DNS server address:", err)
+		return
+	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:2053")
+	udpAddr, err := net.ResolveUDPAddr("udp", ":1053")
 	if err != nil {
 		log.Println("Failed to resolve UDP address:", err)
 		return
@@ -22,39 +27,44 @@ func main() {
 	}
 	defer udpConn.Close()
 
+	// Prepare buffer and set timeout
 	buf := make([]byte, 512)
 
 	for {
-		size, source, err := udpConn.ReadFromUDP(buf)
+		n, clientAddr, err := udpConn.ReadFromUDP(buf)
 		if err != nil {
-			log.Println("Error receiving data:", err)
-			break
-		}
-
-		log.Printf("% x\n", buf[:size])
-		requestPacket, err := dns.ParseDNSPacket(buf, size, source)
-		if err != nil {
-			log.Println("Failed to parse DNS packet:", err)
-			continue
-		}
-		log.Printf("%+v\n", requestPacket)
-
-		responsePacket, err := dns.HandleDNSRequest(requestPacket)
-		if err != nil {
-			log.Println(err.Error())
-			continue
-		}
-		log.Printf("%+v\n", responsePacket)
-
-		response, err := responsePacket.ToBytes()
-		if err != nil {
-			log.Println(err.Error())
+			log.Println("Failed to read from UDP:", err)
 			continue
 		}
 
-		_, err = udpConn.WriteToUDP(response, source)
+		forwardConn, err := net.DialUDP("udp", nil, dnsServerAddr)
 		if err != nil {
-			log.Println("Failed to send response:", err)
+			log.Println("Failed to connect to DNS server:", err)
+			continue
+		}
+
+		_, err = forwardConn.Write(buf[:n])
+		if err != nil {
+			log.Println("Failed to forward DNS request:", err)
+			continue
+		}
+
+		if err = forwardConn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			log.Println("Failed to set deadline on forward connection:", err)
+		}
+
+		n2, _, err := forwardConn.ReadFromUDP(buf)
+		if err != nil {
+			log.Println("Failed to read from forward connection:", err)
+			continue
+		}
+		forwardConn.Close()
+
+		_, err = udpConn.WriteToUDP(buf[:n2], clientAddr)
+		if err != nil {
+			log.Println("Failed to send response to client:", err)
+			continue
 		}
 	}
+
 }
