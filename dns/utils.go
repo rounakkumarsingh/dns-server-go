@@ -67,5 +67,5 @@ func decodeDomainName(encodedDomainName []byte, start int, jumped bool) (string,
 		parts = append(parts, string(part))
 		i = i + int(partLength)
 	}
-	return strings.Join(parts, "."), i, nil
+	return strings.Join(parts, ".") + ".", i, nil
 }

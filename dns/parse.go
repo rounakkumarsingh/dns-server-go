@@ -171,7 +171,7 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 	case uint16(RecordType.SOA): // SOA record
 		return SOARecord{DNSRecordPreamble: recordPreamble}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.OPT): // OPT record
-		if domainName != "" {
+		if domainName != "." {
 			return nil, -1, errors.New("Invalid OPT record domain name")
 		}
 
