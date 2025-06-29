@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"time"
+
+	"github.com/rounakkumarsingh/dns-server/dns"
 )
 
 func main() {
@@ -59,6 +62,13 @@ func main() {
 			continue
 		}
 		forwardConn.Close()
+
+		parsedPacket, err := dns.ParseDNSPacket(buf[:n2], n2, clientAddr)
+		if err != nil {
+			log.Println("Failed to parse DNS packet:", err)
+			continue
+		}
+		fmt.Println("Received DNS packet:", parsedPacket)
 
 		_, err = udpConn.WriteToUDP(buf[:n2], clientAddr)
 		if err != nil {

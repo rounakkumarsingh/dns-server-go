@@ -337,3 +337,73 @@ func (r PTRRecord) String() string {
 type SPFRecord struct {
 	TXTRecord
 }
+
+// OPTRecord represents a DNS record of type OPT (EDNS0).
+type EDNSOption struct {
+	Code uint16
+	Data []byte
+}
+
+type OPTRecord struct {
+	Name     string       // Name is always empty for OPT records
+	UDPSize  uint16       // UDPSize is the maximum size of the UDP payload
+	ExtRCODE uint8        // Extended response code
+	Version  uint8        // Version of the EDNS0 protocol
+	DO       bool         // DNSSEC OK flag
+	Z        uint16       // Other flags, reserved for future use
+	Options  []EDNSOption // Options field, contains EDNS options
+}
+
+func (r OPTRecord) preamble() DNSRecordPreamble {
+	serializedZ := r.Z
+	if r.DO {
+		serializedZ |= 0x8000
+	}
+	ttl := (uint32(r.ExtRCODE) << 24) | (uint32(r.Version) << 16) | uint32(serializedZ)
+	return DNSRecordPreamble{
+		Name:  r.Name,
+		Type:  RecordType.OPT,
+		Class: Class(r.UDPSize),
+		TTL:   ttl,
+	}
+}
+
+func (r OPTRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.preamble().ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	rdata := make([]byte, 0)
+	for _, option := range r.Options {
+		optionData := make([]byte, 4+len(option.Data))
+		binary.BigEndian.PutUint16(optionData[:2], option.Code)
+		binary.BigEndian.PutUint16(optionData[2:4], uint16(len(option.Data)))
+		copy(optionData[4:], option.Data)
+		rdata = append(rdata, optionData...)
+	}
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rdata)))
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, rdata...)
+
+	return buf, nil
+}
+
+func (r OPTRecord) String() string {
+	str := "OPT Record:\n"
+	str += fmt.Sprintf("  UDPSize: %d\n", r.UDPSize)
+	str += fmt.Sprintf("  ExtRCODE: %d\n", r.ExtRCODE)
+	str += fmt.Sprintf("  Version: %d\n", r.Version)
+	str += fmt.Sprintf("  DO: %v\n", r.DO)
+	str += fmt.Sprintf("  Z: %d\n", r.Z)
+	if len(r.Options) > 0 {
+		str += "  Options:\n"
+		for _, opt := range r.Options {
+			str += fmt.Sprintf("    Code: %d, Data: %x\n", opt.Code, opt.Data)
+		}
+	} else {
+		str += "  Options: none\n"
+	}
+	return str
+}

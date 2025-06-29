@@ -170,6 +170,39 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.SOA): // SOA record
 		return SOARecord{DNSRecordPreamble: recordPreamble}, end + 11 + int(rdLength), nil
+	case uint16(RecordType.OPT): // OPT record
+		if domainName != "" {
+			return nil, -1, errors.New("Invalid OPT record domain name")
+		}
+
+		// Time to get those options
+
+		options := make([]EDNSOption, 0)
+
+		i := 0
+		for i+4 <= len(rdata) {
+			optionCode := binary.BigEndian.Uint16(rdata[i : i+2])
+			optionLength := binary.BigEndian.Uint16(rdata[i+2 : i+4])
+			if i+4+int(optionLength) > len(rdata) {
+				return nil, -1, errors.New("Invalid OPT record option length")
+			}
+			optionData := rdata[i+4 : i+4+int(optionLength)]
+			i += 4 + int(optionLength)
+			options = append(options, EDNSOption{
+				Code: optionCode,
+				Data: optionData,
+			})
+		}
+
+		return OPTRecord{
+			Name:     domainName,
+			UDPSize:  class,
+			ExtRCODE: uint8((ttl & 0xFF000000) >> 24),
+			Version:  uint8((ttl & 0x00FF0000) >> 16),
+			DO:       (ttl & 0x00008000) != 0,
+			Z:        uint16((ttl & 0x00007FFF) >> 15),
+			Options:  options,
+		}, end + 11 + int(rdLength), nil
 	default:
 		return nil, -1, errors.New("Unknown record type")
 	}
