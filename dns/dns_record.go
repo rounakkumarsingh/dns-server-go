@@ -2,54 +2,338 @@ package dns
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"net"
 )
 
-type DNSRecord struct {
+type DNSRecordPreamble struct {
 	Name  string
 	Type  Record
 	Class Class
 	TTL   uint32
-	// RDLength uint16 (Can be deduced from len(RDATA))
-	RDATA []byte
 }
 
-func (a *DNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) []byte {
+func (a DNSRecordPreamble) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
 	buf := encodeDomainName(a.Name, offsetMap, offSet)
 
 	typeBytes := make([]byte, 2)
 	classBytes := make([]byte, 2)
 	ttlBytes := make([]byte, 4)
-	rdLengthBytes := make([]byte, 2)
 
 	binary.BigEndian.PutUint16(typeBytes, uint16(a.Type))
 	binary.BigEndian.PutUint16(classBytes, uint16(a.Class))
 	binary.BigEndian.PutUint32(ttlBytes, a.TTL)
-	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(a.RDATA)))
 
 	buf = append(buf, typeBytes...)
 	buf = append(buf, classBytes...)
 	buf = append(buf, ttlBytes...)
-	buf = append(buf, rdLengthBytes...)
-	buf = append(buf, a.RDATA...)
 
-	return buf
+	return buf, nil
+
 }
 
-func (a DNSRecord) String() string {
-	rdataStr := ""
-	for i, b := range a.RDATA {
-		if i > 0 {
-			rdataStr += " "
-		}
-		rdataStr += fmt.Sprintf("%d", b)
+func (a DNSRecordPreamble) String() string {
+	return "DNS Record:\n" +
+		"  Name: " + a.Name + "\n" +
+		"  Type: " + a.Type.String() + "\n" +
+		"  Class: " + a.Class.String() + "\n" +
+		"  TTL: " + fmt.Sprint(a.TTL)
+}
+
+type DNSRecord interface {
+	preamble() DNSRecordPreamble
+	ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error)
+	String() string
+}
+
+// ARecord represents a DNS record of type A (Address).
+
+type ADNSRecord struct {
+	DNSRecordPreamble
+	IP net.IP
+}
+
+func (r ADNSRecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r ADNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
 	}
-	return fmt.Sprintf("DNS Record:\n"+
-		"  Name: %s\n"+
-		"  Type: %s\n"+
-		"  Class: %s\n"+
-		"  TTL: %d\n"+
-		"  RDATA Length: %d bytes\n"+
-		"  RDATA: % x\n",
-		a.Name, a.Type, a.Class, a.TTL, len(a.RDATA), a.RDATA)
+
+	if r.IP.To4() == nil {
+		return nil, errors.New("IP address is not an IPv4 address")
+	}
+	rData := []byte(r.IP.To4())
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, rData...)
+
+	return buf, nil
+}
+
+func (r ADNSRecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"  IP: " + r.IP.String()
+}
+
+// NSDNSRecord represents a DNS record of type NS (Name Server).
+
+type NSDNSRecord struct {
+	DNSRecordPreamble
+	Host string
+}
+
+func (r NSDNSRecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r NSDNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	rData := encodeDomainName(r.Host, offsetMap, offSet+uint(len(buf)))
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, rData...)
+
+	return buf, nil
+}
+
+func (r NSDNSRecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"  Host: " + r.Host
+}
+
+// CNAMERecord represents a DNS record of type CNAME (Canonical Name).
+type CNAMERecord struct {
+	DNSRecordPreamble
+	CanonicalName string
+}
+
+func (r CNAMERecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r CNAMERecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	rData := encodeDomainName(r.CanonicalName, offsetMap, offSet+uint(len(buf)))
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, rData...)
+
+	return buf, nil
+}
+
+func (r CNAMERecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"  Canonical Name: " + r.CanonicalName
+}
+
+// TXTRecord represents a DNS record of type TXT (Text).
+type TXTRecord struct {
+	DNSRecordPreamble
+	Text string
+}
+
+func (r TXTRecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r TXTRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	rData := []byte(r.Text)
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, rData...)
+
+	return buf, nil
+}
+
+func (r TXTRecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"  Text: " + r.Text
+}
+
+// MX Record represents a DNS record of type MX (Mail Exchange).
+type MXRecord struct {
+	DNSRecordPreamble
+	Preference uint16
+	Exchange   string
+}
+
+func (r MXRecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r MXRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	preferenceBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(preferenceBytes, r.Preference)
+
+	rData := encodeDomainName(r.Exchange, offsetMap, offSet+uint(len(buf)+len(preferenceBytes)))
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(preferenceBytes)+len(rData)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, preferenceBytes...)
+	buf = append(buf, rData...)
+
+	return buf, nil
+}
+
+func (r MXRecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"  Preference: " + fmt.Sprint(r.Preference) + "\n" +
+		"  Exchange: " + r.Exchange
+}
+
+// AAAARecord represents a DNS record of type AAAA (IPv6 Address).
+type AAAARecord struct {
+	DNSRecordPreamble
+	IP net.IP
+}
+
+func (r AAAARecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r AAAARecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	if r.IP.To16() == nil {
+		return nil, errors.New("IP address is not an IPv6 address")
+	}
+	rData := []byte(r.IP.To16())
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, rData...)
+
+	return buf, nil
+}
+
+// SOARecord represents a DNS record of type SOA (Start of Authority).
+type SOARecord struct {
+	DNSRecordPreamble
+	MName      string // Primary name server
+	RName      string // Responsible person
+	Serial     uint32 // Serial number
+	Refresh    uint32 // Refresh interval
+	Retry      uint32 // Retry interval
+	Expire     uint32 // Expiration limit
+	MinimumTTL uint32 // Minimum TTL
+}
+
+func (r SOARecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r SOARecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	mNameData := encodeDomainName(r.MName, offsetMap, offSet+uint(len(buf)))
+	rNameData := encodeDomainName(r.RName, offsetMap, offSet+uint(len(buf)+len(mNameData)))
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(mNameData)+len(rNameData)+20))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, mNameData...)
+	buf = append(buf, rNameData...)
+
+	// Append the numeric fields
+	binary.BigEndian.PutUint32(buf, r.Serial)
+	binary.BigEndian.PutUint32(buf[4:], r.Refresh)
+	binary.BigEndian.PutUint32(buf[8:], r.Retry)
+	binary.BigEndian.PutUint32(buf[12:], r.Expire)
+	binary.BigEndian.PutUint32(buf[16:], r.MinimumTTL)
+
+	return buf, nil
+}
+
+func (r SOARecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"  MName: " + r.MName + "\n" +
+		"  RName: " + r.RName + "\n" +
+		"  Serial: " + fmt.Sprint(r.Serial) + "\n" +
+		"  Refresh: " + fmt.Sprint(r.Refresh) + "\n" +
+		"  Retry: " + fmt.Sprint(r.Retry) + "\n" +
+		"  Expire: " + fmt.Sprint(r.Expire) + "\n" +
+		"  Minimum TTL: " + fmt.Sprint(r.MinimumTTL)
+}
+
+// PTRRecord represents a DNS record of type PTR (Pointer).
+type PTRRecord struct {
+	DNSRecordPreamble
+	Pointer string // Domain name to which the PTR record points
+}
+
+func (r PTRRecord) preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r PTRRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	rData := encodeDomainName(r.Pointer, offsetMap, offSet+uint(len(buf)))
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, rData...)
+
+	return buf, nil
+}
+
+func (r PTRRecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"  Pointer: " + r.Pointer
+}
+
+// SPFRecord represents a DNS record of type SPF (Sender Policy Framework).
+type SPFRecord struct {
+	TXTRecord
 }

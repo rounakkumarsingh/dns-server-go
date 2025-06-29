@@ -34,7 +34,12 @@ func (m *DNSPacket) ToBytes() ([]byte, error) {
 	}
 
 	for _, answer := range m.Answers {
-		buf = append(buf, answer.ToBytes(offsetMap, uint(len(buf)))...)
+		bytes, err := answer.ToBytes(offsetMap, uint(len(buf)))
+		if err != nil {
+			return nil, err
+		}
+		buf = append(buf, bytes...)
+
 	}
 
 	if m.Header.NSCOUNT != uint16(len(m.Authoratives)) {
@@ -42,7 +47,12 @@ func (m *DNSPacket) ToBytes() ([]byte, error) {
 	}
 
 	for _, authoratives := range m.Authoratives {
-		buf = append(buf, authoratives.ToBytes(offsetMap, uint(len(buf)))...)
+		bytes, err := authoratives.ToBytes(offsetMap, uint(len(buf)))
+		if err != nil {
+			return nil, err
+		}
+		buf = append(buf, bytes...)
+
 	}
 
 	if m.Header.ARCOUNT != uint16(len(m.Additional)) {
@@ -50,7 +60,11 @@ func (m *DNSPacket) ToBytes() ([]byte, error) {
 	}
 
 	for _, additional := range m.Additional {
-		buf = append(buf, additional.ToBytes(offsetMap, uint(len(buf)))...)
+		bytes, err := additional.ToBytes(offsetMap, uint(len(buf)))
+		if err != nil {
+			return nil, err
+		}
+		buf = append(buf, bytes...)
 	}
 
 	return buf, nil

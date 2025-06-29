@@ -41,7 +41,7 @@ func ParseDNSPacket(data []byte, size int, source *net.UDPAddr) (*DNSPacket, err
 		if err != nil {
 			return nil, err
 		}
-		answers = append(answers, *answerRecord)
+		answers = append(answers, answerRecord)
 		curr = end
 	}
 
@@ -54,7 +54,7 @@ func ParseDNSPacket(data []byte, size int, source *net.UDPAddr) (*DNSPacket, err
 		if err != nil {
 			return nil, err
 		}
-		authoratives = append(authoratives, *authoritativeRecord)
+		authoratives = append(authoratives, authoritativeRecord)
 		curr = end
 	}
 
@@ -67,7 +67,7 @@ func ParseDNSPacket(data []byte, size int, source *net.UDPAddr) (*DNSPacket, err
 		if err != nil {
 			return nil, err
 		}
-		additionals = append(additionals, *additionalRecord)
+		additionals = append(additionals, additionalRecord)
 		curr = end
 	}
 
@@ -125,7 +125,7 @@ func parseQuestion(question []byte, start int) (*DNSQuestion, int, error) {
 	}, end + 5, nil
 }
 
-func parseRecord(record []byte, start int) (*DNSRecord, int, error) {
+func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 	domainName, end, err := decodeDomainName(record, start, false)
 	if err != nil {
 		return nil, -1, err
@@ -145,11 +145,32 @@ func parseRecord(record []byte, start int) (*DNSRecord, int, error) {
 	}
 
 	rdata := record[end+11 : end+11+int(rdLength)]
-	return &DNSRecord{
+
+	recordPreamble := DNSRecordPreamble{
 		Name:  domainName,
 		Type:  Record(recordType),
 		Class: Class(class),
 		TTL:   ttl,
-		RDATA: rdata,
-	}, end + 11 + int(rdLength), nil
+	}
+
+	switch recordType {
+	case uint16(RecordType.A): // A record
+		return ADNSRecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
+	case uint16(RecordType.NS): // NS record
+		return NSDNSRecord{DNSRecordPreamble: recordPreamble, Host: string(rdata)}, end + 11 + int(rdLength), nil
+	case uint16(RecordType.CNAME): // CNAME record
+		return CNAMERecord{DNSRecordPreamble: recordPreamble, CanonicalName: string(rdata)}, end + 11 + int(rdLength), nil
+	case uint16(RecordType.TXT): // TXT record
+		return TXTRecord{DNSRecordPreamble: recordPreamble, Text: string(rdata)}, end + 11 + int(rdLength), nil
+	case uint16(RecordType.MX): // MX record
+		preference := binary.BigEndian.Uint16(rdata[:2])
+		exchange := string(rdata[2:])
+		return MXRecord{DNSRecordPreamble: recordPreamble, Preference: preference, Exchange: exchange}, end + 11 + int(rdLength), nil
+	case uint16(RecordType.AAAA): // AAAA record
+		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
+	case uint16(RecordType.SOA): // SOA record
+		return SOARecord{DNSRecordPreamble: recordPreamble}, end + 11 + int(rdLength), nil
+	default:
+		return nil, -1, errors.New("Unknown record type")
+	}
 }
