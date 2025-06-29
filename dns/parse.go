@@ -164,7 +164,7 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 		return TXTRecord{DNSRecordPreamble: recordPreamble, Text: string(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.MX): // MX record
 		preference := binary.BigEndian.Uint16(rdata[:2])
-		exchange := string(rdata[2:])
+		exchange, _, _ := decodeDomainName(record, end+13, false)
 		return MXRecord{DNSRecordPreamble: recordPreamble, Preference: preference, Exchange: exchange}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.AAAA): // AAAA record
 		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
