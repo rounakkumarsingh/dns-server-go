@@ -8,6 +8,9 @@ import (
 )
 
 func encodeDomainName(name string, offsetMap map[string]uint, currentOffset uint) []byte {
+	if name == "." {
+		return []byte{0x00}
+	}
 	labels := strings.Split(name, ".")
 	var buf []byte
 	for i, label := range labels {
@@ -21,12 +24,15 @@ func encodeDomainName(name string, offsetMap map[string]uint, currentOffset uint
 			return buf
 		}
 		length := len(label)
+		if length == 0 {
+			continue // Skip empty labels
+		}
 		buf = append(buf, byte(length))
 		buf = append(buf, []byte(label)...)
 		offsetMap[suffix] = currentOffset
 		currentOffset += uint(length + 1) // +1 for the length byte
 	}
-	buf = append(buf, 0) // end of domain
+	buf = append(buf, 0x00)
 	return buf
 }
 

@@ -71,7 +71,7 @@ func (h *DNSHeader) ToBytes() ([]byte, error) {
 		return nil, fmt.Errorf("ARCOUNT is way too large in the header body")
 	}
 
-	b3 := (h.QR << 7) | ((h.OPCODE & 0xF) << 3) | (h.AA << 2) | (h.TC << 1) | h.RD
+	b3 := ((h.QR & 1) << 7) | ((h.OPCODE & 0xF) << 3) | (h.AA << 2) | (h.TC << 1) | (h.RD & 1)
 	b4 := (h.RA << 7) | (h.Z << 6) | (h.AD << 5) | (h.CD << 4) | (uint8(h.RCODE) & 0xF)
 
 	buf := make([]byte, 12)

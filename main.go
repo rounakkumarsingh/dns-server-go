@@ -46,6 +46,15 @@ func main() {
 			continue
 		}
 
+		recievedPacket, err := dns.ParseDNSPacket(buf[:n], n, clientAddr)
+		if err != nil {
+			log.Println("Failed to parse DNS packet:", err)
+			forwardConn.Close()
+			continue
+		}
+
+		fmt.Println("Received ", *recievedPacket)
+
 		_, err = forwardConn.Write(buf[:n])
 		if err != nil {
 			log.Println("Failed to forward DNS request:", err)
@@ -68,9 +77,18 @@ func main() {
 			log.Println("Failed to parse DNS packet:", err)
 			continue
 		}
-		fmt.Println("Received DNS packet:", parsedPacket)
 
-		_, err = udpConn.WriteToUDP(buf[:n2], clientAddr)
+		parsedPacket.Header.RA = 1 // Set Recursion Available flag
+		parsedPacket.Header.RD = 1 // Set Recursion Desired flag
+
+		fmt.Println("Received DNS packet:", parsedPacket)
+		updatedPacket, err := parsedPacket.ToBytes()
+		if err != nil {
+			log.Println("Failed to convert DNS packet to bytes:", err)
+			continue
+		}
+
+		_, err = udpConn.WriteToUDP(updatedPacket, clientAddr)
 		if err != nil {
 			log.Println("Failed to send response to client:", err)
 			continue
