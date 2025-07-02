@@ -11,7 +11,7 @@ import (
 
 func main() {
 	// For stub resolver
-	dnsServerAddr, err := net.ResolveUDPAddr("udp", "8.8.8.8:53")
+	dnsServerAddr, err := net.ResolveUDPAddr("udp", "170.247.170.2:53")
 	if err != nil {
 		log.Println("Failed to resolve DNS server address:", err)
 		return
@@ -30,8 +30,7 @@ func main() {
 	}
 	defer udpConn.Close()
 
-	// Prepare buffer and set timeout
-	buf := make([]byte, 512)
+	buf := make([]byte, 4096) // 4KB buffer
 
 	for {
 		n, clientAddr, err := udpConn.ReadFromUDP(buf)
@@ -74,8 +73,28 @@ func main() {
 
 		parsedPacket, err := dns.ParseDNSPacket(buf[:n2], n2, clientAddr)
 		if err != nil {
-			log.Println("Failed to parse DNS packet:", err)
-			continue
+			if err.Error() == "Truncated DNS packet" {
+				initialQueryBuffer, err := recievedPacket.ToBytes()
+				if err != nil {
+					log.Println("Failed to convert DNS packet to bytes:", err)
+					continue
+				}
+				newBuf, err := handleOverTCP(initialQueryBuffer)
+				if err != nil {
+					log.Println("Failed to handle truncated packet over TCP:", err)
+					continue
+				}
+				parsedPacket, err = dns.ParseDNSPacket(newBuf, len(newBuf), clientAddr)
+				if err != nil {
+					log.Println("Failed to parse DNS packet after TCP handling:", err)
+					continue
+				}
+				// buf = newBuf
+				// n2 = len(newBuf)
+			} else {
+				log.Println("Failed to parse DNS packet:", err)
+				continue
+			}
 		}
 
 		parsedPacket.Header.RA = 1 // Set Recursion Available flag

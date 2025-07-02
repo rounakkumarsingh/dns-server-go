@@ -8,10 +8,11 @@ import (
 )
 
 func encodeDomainName(name string, offsetMap map[string]uint, currentOffset uint) []byte {
-	if name == "." {
+	if name == "." || name == "" {
 		return []byte{0x00}
 	}
-	labels := strings.Split(name, ".")
+	trimmed := strings.TrimSuffix(name, ".")
+	labels := strings.Split(trimmed, ".")
 	var buf []byte
 	for i, label := range labels {
 		suffix := strings.Join(labels[i:], ".")
@@ -24,9 +25,6 @@ func encodeDomainName(name string, offsetMap map[string]uint, currentOffset uint
 			return buf
 		}
 		length := len(label)
-		if length == 0 {
-			continue // Skip empty labels
-		}
 		buf = append(buf, byte(length))
 		buf = append(buf, []byte(label)...)
 		offsetMap[suffix] = currentOffset
@@ -40,7 +38,7 @@ func checkBits(value uint, numBits uint) bool {
 	return value <= uint(math.Pow(2, float64(numBits)))
 }
 
-func decodeDomainName(encodedDomainName []byte, start int, jumped bool) (string, int, error) {
+func decodeDomainName(encodedDomainName []byte, start int) (string, int, error) {
 	var parts []string
 	i := start
 	for ; i < len(encodedDomainName) && encodedDomainName[i] != 0; i++ {
@@ -48,9 +46,6 @@ func decodeDomainName(encodedDomainName []byte, start int, jumped bool) (string,
 
 		if partLength&0xC0 == 0xC0 {
 			// This is a compression pointer to another compression pointer
-			if jumped {
-				return "", -1, errors.New("Invalid compression pointer to another compression pointer")
-			}
 			if i+1 >= len(encodedDomainName) {
 				return "", -1, errors.New("Compression pointer out of bounds")
 			}
@@ -58,7 +53,10 @@ func decodeDomainName(encodedDomainName []byte, start int, jumped bool) (string,
 			if offset >= len(encodedDomainName) || offset < 0 {
 				return "", -1, errors.New("Invalid compression pointer")
 			}
-			value, _, err := decodeDomainName(encodedDomainName, offset, true)
+			if encodedDomainName[offset]&0xC0 == 0xC0 {
+				return "", -1, errors.New("Invalid compression pointer to another compression pointer")
+			}
+			value, _, err := decodeDomainName(encodedDomainName, offset)
 			if err != nil {
 				return "", -1, err
 			}

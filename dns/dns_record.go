@@ -35,10 +35,10 @@ func (a DNSRecordPreamble) ToBytes(offsetMap map[string]uint, offSet uint) ([]by
 
 func (a DNSRecordPreamble) String() string {
 	return "DNS Record:\n" +
-		"  Name: " + a.Name + "\n" +
-		"  Type: " + a.Type.String() + "\n" +
-		"  Class: " + a.Class.String() + "\n" +
-		"  TTL: " + fmt.Sprint(a.TTL)
+		"\tName: " + a.Name + "\n" +
+		"\tType: " + a.Type.String() + "\n" +
+		"\tClass: " + a.Class.String() + "\n" +
+		"\tTTL: " + fmt.Sprint(a.TTL)
 }
 
 type DNSRecord interface {
@@ -80,7 +80,7 @@ func (r ADNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, err
 
 func (r ADNSRecord) String() string {
 	return r.DNSRecordPreamble.String() + "\n" +
-		"  IP: " + r.IP.String()
+		"\tIP: " + r.IP.String()
 }
 
 // NSDNSRecord represents a DNS record of type NS (Name Server).
@@ -100,7 +100,7 @@ func (r NSDNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, er
 		return nil, err
 	}
 
-	rData := encodeDomainName(r.Host, offsetMap, offSet+uint(len(buf)))
+	rData := encodeDomainName(r.Host, offsetMap, offSet+uint(len(buf))+2) // +2 for rdLength
 
 	rdLengthBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
@@ -113,7 +113,7 @@ func (r NSDNSRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, er
 
 func (r NSDNSRecord) String() string {
 	return r.DNSRecordPreamble.String() + "\n" +
-		"  Host: " + r.Host
+		"\tHost: " + r.Host
 }
 
 // CNAMERecord represents a DNS record of type CNAME (Canonical Name).
@@ -132,7 +132,7 @@ func (r CNAMERecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, er
 		return nil, err
 	}
 
-	rData := encodeDomainName(r.CanonicalName, offsetMap, offSet+uint(len(buf)))
+	rData := encodeDomainName(r.CanonicalName, offsetMap, offSet+uint(len(buf))+2) // +2 for rdLength
 
 	rdLengthBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
@@ -145,7 +145,7 @@ func (r CNAMERecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, er
 
 func (r CNAMERecord) String() string {
 	return r.DNSRecordPreamble.String() + "\n" +
-		"  Canonical Name: " + r.CanonicalName
+		"\tCanonical Name: " + r.CanonicalName
 }
 
 // TXTRecord represents a DNS record of type TXT (Text).
@@ -177,7 +177,7 @@ func (r TXTRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 
 func (r TXTRecord) String() string {
 	return r.DNSRecordPreamble.String() + "\n" +
-		"  Text: " + r.Text
+		"\tText: " + r.Text
 }
 
 // MX Record represents a DNS record of type MX (Mail Exchange).
@@ -200,7 +200,7 @@ func (r MXRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error
 	preferenceBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(preferenceBytes, r.Preference)
 
-	rData := encodeDomainName(r.Exchange, offsetMap, offSet+uint(len(buf)+len(preferenceBytes)))
+	rData := encodeDomainName(r.Exchange, offsetMap, offSet+uint(len(buf)+len(preferenceBytes))+2) // +2 for rdLength
 
 	rdLengthBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(preferenceBytes)+len(rData)))
@@ -214,8 +214,8 @@ func (r MXRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error
 
 func (r MXRecord) String() string {
 	return r.DNSRecordPreamble.String() + "\n" +
-		"  Preference: " + fmt.Sprint(r.Preference) + "\n" +
-		"  Exchange: " + r.Exchange
+		"\tPreference: " + fmt.Sprint(r.Preference) + "\n" +
+		"\tExchange: " + r.Exchange
 }
 
 // AAAARecord represents a DNS record of type AAAA (IPv6 Address).
@@ -248,6 +248,11 @@ func (r AAAARecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, err
 	return buf, nil
 }
 
+func (r AAAARecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"\tIP: " + r.IP.String()
+}
+
 // SOARecord represents a DNS record of type SOA (Start of Authority).
 type SOARecord struct {
 	DNSRecordPreamble
@@ -270,8 +275,8 @@ func (r SOARecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 		return nil, err
 	}
 
-	mNameData := encodeDomainName(r.MName, offsetMap, offSet+uint(len(buf)))
-	rNameData := encodeDomainName(r.RName, offsetMap, offSet+uint(len(buf)+len(mNameData)))
+	mNameData := encodeDomainName(r.MName, offsetMap, offSet+uint(len(buf))+2)                // +2 for rdLength
+	rNameData := encodeDomainName(r.RName, offsetMap, offSet+uint(len(buf)+len(mNameData))+2) // +2 for rdLength
 
 	rdLengthBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(mNameData)+len(rNameData)+20))
@@ -292,13 +297,13 @@ func (r SOARecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 
 func (r SOARecord) String() string {
 	return r.DNSRecordPreamble.String() + "\n" +
-		"  MName: " + r.MName + "\n" +
-		"  RName: " + r.RName + "\n" +
-		"  Serial: " + fmt.Sprint(r.Serial) + "\n" +
-		"  Refresh: " + fmt.Sprint(r.Refresh) + "\n" +
-		"  Retry: " + fmt.Sprint(r.Retry) + "\n" +
-		"  Expire: " + fmt.Sprint(r.Expire) + "\n" +
-		"  Minimum TTL: " + fmt.Sprint(r.MinimumTTL)
+		"\tMName: " + r.MName + "\n" +
+		"\tRName: " + r.RName + "\n" +
+		"\tSerial: " + fmt.Sprint(r.Serial) + "\n" +
+		"\tRefresh: " + fmt.Sprint(r.Refresh) + "\n" +
+		"\tRetry: " + fmt.Sprint(r.Retry) + "\n" +
+		"\tExpire: " + fmt.Sprint(r.Expire) + "\n" +
+		"\tMinimum TTL: " + fmt.Sprint(r.MinimumTTL)
 }
 
 // PTRRecord represents a DNS record of type PTR (Pointer).
@@ -317,7 +322,7 @@ func (r PTRRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 		return nil, err
 	}
 
-	rData := encodeDomainName(r.Pointer, offsetMap, offSet+uint(len(buf)))
+	rData := encodeDomainName(r.Pointer, offsetMap, offSet+uint(len(buf))+2) // +2 for rdLength
 
 	rdLengthBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(rData)))
@@ -330,7 +335,7 @@ func (r PTRRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 
 func (r PTRRecord) String() string {
 	return r.DNSRecordPreamble.String() + "\n" +
-		"  Pointer: " + r.Pointer
+		"\tPointer: " + r.Pointer
 }
 
 // SPFRecord represents a DNS record of type SPF (Sender Policy Framework).
@@ -392,18 +397,18 @@ func (r OPTRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 
 func (r OPTRecord) String() string {
 	str := "OPT Record:\n"
-	str += fmt.Sprintf("  UDPSize: %d\n", r.UDPSize)
-	str += fmt.Sprintf("  ExtRCODE: %d\n", r.ExtRCODE)
-	str += fmt.Sprintf("  Version: %d\n", r.Version)
-	str += fmt.Sprintf("  DO: %v\n", r.DO)
-	str += fmt.Sprintf("  Z: %d\n", r.Z)
+	str += fmt.Sprintf("\tUDPSize: %d\n", r.UDPSize)
+	str += fmt.Sprintf("\tExtRCODE: %d\n", r.ExtRCODE)
+	str += fmt.Sprintf("\tVersion: %d\n", r.Version)
+	str += fmt.Sprintf("\tDO: %v\n", r.DO)
+	str += fmt.Sprintf("\tZ: %d\n", r.Z)
 	if len(r.Options) > 0 {
-		str += "  Options:\n"
+		str += "\tOptions:\n"
 		for _, opt := range r.Options {
-			str += fmt.Sprintf("    Code: %d, Data: %x\n", opt.Code, opt.Data)
+			str += fmt.Sprintf("\t\tCode: %d, Data: % x\n", opt.Code, opt.Data)
 		}
 	} else {
-		str += "  Options: none\n"
+		str += "\tOptions: none\n"
 	}
 	return str
 }

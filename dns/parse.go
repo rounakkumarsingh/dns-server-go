@@ -17,6 +17,10 @@ func ParseDNSPacket(data []byte, size int, source *net.UDPAddr) (*DNSPacket, err
 	headerBytes := buf[:12]
 	header := parseHeader(headerBytes)
 
+	if header.TC == 1 {
+		return nil, errors.New("Truncated DNS packet")
+	}
+
 	curr := 12 // Start after the header
 
 	questions := make([]DNSQuestion, 0, header.QDCOUNT)
@@ -108,7 +112,7 @@ func parseHeader(headerBytes []byte) *DNSHeader {
 }
 
 func parseQuestion(question []byte, start int) (*DNSQuestion, int, error) {
-	domainName, end, err := decodeDomainName(question, start, false)
+	domainName, end, err := decodeDomainName(question, start)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -126,7 +130,7 @@ func parseQuestion(question []byte, start int) (*DNSQuestion, int, error) {
 }
 
 func parseRecord(record []byte, start int) (DNSRecord, int, error) {
-	domainName, end, err := decodeDomainName(record, start, false)
+	domainName, end, err := decodeDomainName(record, start)
 	if err != nil {
 		return nil, -1, err
 	}
@@ -157,14 +161,15 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 	case uint16(RecordType.A): // A record
 		return ADNSRecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.NS): // NS record
-		return NSDNSRecord{DNSRecordPreamble: recordPreamble, Host: string(rdata)}, end + 11 + int(rdLength), nil
+		host, _, _ := decodeDomainName(record, end+11)
+		return NSDNSRecord{DNSRecordPreamble: recordPreamble, Host: host}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.CNAME): // CNAME record
 		return CNAMERecord{DNSRecordPreamble: recordPreamble, CanonicalName: string(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.TXT): // TXT record
 		return TXTRecord{DNSRecordPreamble: recordPreamble, Text: string(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.MX): // MX record
 		preference := binary.BigEndian.Uint16(rdata[:2])
-		exchange, _, _ := decodeDomainName(record, end+13, false)
+		exchange, _, _ := decodeDomainName(record, end+13)
 		return MXRecord{DNSRecordPreamble: recordPreamble, Preference: preference, Exchange: exchange}, end + 11 + int(rdLength), nil
 	case uint16(RecordType.AAAA): // AAAA record
 		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
