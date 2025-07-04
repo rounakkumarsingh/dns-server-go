@@ -4,18 +4,9 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
-
-	"github.com/rounakkumarsingh/dns-server/dns"
 )
 
 func main() {
-	// For stub resolver
-	dnsServerAddr, err := net.ResolveUDPAddr("udp", "170.247.170.2:53")
-	if err != nil {
-		log.Println("Failed to resolve DNS server address:", err)
-		return
-	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", ":1053")
 	if err != nil {
@@ -39,69 +30,14 @@ func main() {
 			continue
 		}
 
-		forwardConn, err := net.DialUDP("udp", nil, dnsServerAddr)
+		responsePacket, err := handlePacket(buf[:n])
 		if err != nil {
-			log.Println("Failed to connect to DNS server:", err)
+			log.Println("Failed to handle DNS packet:", err)
 			continue
 		}
 
-		recievedPacket, err := dns.ParseDNSPacket(buf[:n], n, clientAddr)
-		if err != nil {
-			log.Println("Failed to parse DNS packet:", err)
-			forwardConn.Close()
-			continue
-		}
-
-		fmt.Println("Received ", *recievedPacket)
-
-		_, err = forwardConn.Write(buf[:n])
-		if err != nil {
-			log.Println("Failed to forward DNS request:", err)
-			continue
-		}
-
-		if err = forwardConn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
-			log.Println("Failed to set deadline on forward connection:", err)
-		}
-
-		n2, _, err := forwardConn.ReadFromUDP(buf)
-		if err != nil {
-			log.Println("Failed to read from forward connection:", err)
-			continue
-		}
-		forwardConn.Close()
-
-		parsedPacket, err := dns.ParseDNSPacket(buf[:n2], n2, clientAddr)
-		if err != nil {
-			if err.Error() == "Truncated DNS packet" {
-				initialQueryBuffer, err := recievedPacket.ToBytes()
-				if err != nil {
-					log.Println("Failed to convert DNS packet to bytes:", err)
-					continue
-				}
-				newBuf, err := handleOverTCP(initialQueryBuffer)
-				if err != nil {
-					log.Println("Failed to handle truncated packet over TCP:", err)
-					continue
-				}
-				parsedPacket, err = dns.ParseDNSPacket(newBuf, len(newBuf), clientAddr)
-				if err != nil {
-					log.Println("Failed to parse DNS packet after TCP handling:", err)
-					continue
-				}
-				// buf = newBuf
-				// n2 = len(newBuf)
-			} else {
-				log.Println("Failed to parse DNS packet:", err)
-				continue
-			}
-		}
-
-		parsedPacket.Header.RA = 1 // Set Recursion Available flag
-		parsedPacket.Header.RD = 1 // Set Recursion Desired flag
-
-		fmt.Println("Received DNS packet:", parsedPacket)
-		updatedPacket, err := parsedPacket.ToBytes()
+		fmt.Println(responsePacket)
+		updatedPacket, err := responsePacket.ToBytes()
 		if err != nil {
 			log.Println("Failed to convert DNS packet to bytes:", err)
 			continue

@@ -9,7 +9,7 @@ import (
 
 type DNSRecordPreamble struct {
 	Name  string
-	Type  Record
+	Type  RecordType
 	Class Class
 	TTL   uint32
 }
@@ -34,7 +34,7 @@ func (a DNSRecordPreamble) ToBytes(offsetMap map[string]uint, offSet uint) ([]by
 }
 
 func (a DNSRecordPreamble) String() string {
-	return "DNS Record:\n" +
+	return "DNS RecordType:\n" +
 		"\tName: " + a.Name + "\n" +
 		"\tType: " + a.Type.String() + "\n" +
 		"\tClass: " + a.Class.String() + "\n" +
@@ -42,7 +42,7 @@ func (a DNSRecordPreamble) String() string {
 }
 
 type DNSRecord interface {
-	preamble() DNSRecordPreamble
+	Preamble() DNSRecordPreamble
 	ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error)
 	String() string
 }
@@ -54,7 +54,7 @@ type ADNSRecord struct {
 	IP net.IP
 }
 
-func (r ADNSRecord) preamble() DNSRecordPreamble {
+func (r ADNSRecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -90,7 +90,7 @@ type NSDNSRecord struct {
 	Host string
 }
 
-func (r NSDNSRecord) preamble() DNSRecordPreamble {
+func (r NSDNSRecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -122,7 +122,7 @@ type CNAMERecord struct {
 	CanonicalName string
 }
 
-func (r CNAMERecord) preamble() DNSRecordPreamble {
+func (r CNAMERecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -154,7 +154,7 @@ type TXTRecord struct {
 	Text string
 }
 
-func (r TXTRecord) preamble() DNSRecordPreamble {
+func (r TXTRecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -180,14 +180,14 @@ func (r TXTRecord) String() string {
 		"\tText: " + r.Text
 }
 
-// MX Record represents a DNS record of type MX (Mail Exchange).
+// MX RecordType represents a DNS record of type MX (Mail Exchange).
 type MXRecord struct {
 	DNSRecordPreamble
 	Preference uint16
 	Exchange   string
 }
 
-func (r MXRecord) preamble() DNSRecordPreamble {
+func (r MXRecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -224,7 +224,7 @@ type AAAARecord struct {
 	IP net.IP
 }
 
-func (r AAAARecord) preamble() DNSRecordPreamble {
+func (r AAAARecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -265,7 +265,7 @@ type SOARecord struct {
 	MinimumTTL uint32 // Minimum TTL
 }
 
-func (r SOARecord) preamble() DNSRecordPreamble {
+func (r SOARecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -312,7 +312,7 @@ type PTRRecord struct {
 	Pointer string // Domain name to which the PTR record points
 }
 
-func (r PTRRecord) preamble() DNSRecordPreamble {
+func (r PTRRecord) Preamble() DNSRecordPreamble {
 	return r.DNSRecordPreamble
 }
 
@@ -359,7 +359,7 @@ type OPTRecord struct {
 	Options  []EDNSOption // Options field, contains EDNS options
 }
 
-func (r OPTRecord) preamble() DNSRecordPreamble {
+func (r OPTRecord) Preamble() DNSRecordPreamble {
 	serializedZ := r.Z
 	if r.DO {
 		serializedZ |= 0x8000
@@ -367,14 +367,14 @@ func (r OPTRecord) preamble() DNSRecordPreamble {
 	ttl := (uint32(r.ExtRCODE) << 24) | (uint32(r.Version) << 16) | uint32(serializedZ)
 	return DNSRecordPreamble{
 		Name:  r.Name,
-		Type:  RecordType.OPT,
+		Type:  RType.OPT,
 		Class: Class(r.UDPSize),
 		TTL:   ttl,
 	}
 }
 
 func (r OPTRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
-	buf, err := r.preamble().ToBytes(offsetMap, offSet)
+	buf, err := r.Preamble().ToBytes(offsetMap, offSet)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +396,7 @@ func (r OPTRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 }
 
 func (r OPTRecord) String() string {
-	str := "OPT Record:\n"
+	str := "OPT RecordType:\n"
 	str += fmt.Sprintf("\tUDPSize: %d\n", r.UDPSize)
 	str += fmt.Sprintf("\tExtRCODE: %d\n", r.ExtRCODE)
 	str += fmt.Sprintf("\tVersion: %d\n", r.Version)

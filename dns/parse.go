@@ -7,10 +7,10 @@ import (
 	"net"
 )
 
-func ParseDNSPacket(data []byte, size int, source *net.UDPAddr) (*DNSPacket, error) {
+func ParseDNSPacket(data []byte, size int) (*DNSPacket, error) {
 
 	if size < 12 {
-		return nil, fmt.Errorf("The size of the request from %s is %d (invalid request)", source.String(), size)
+		return nil, fmt.Errorf("The size of the request is %d (invalid request)", size)
 	}
 
 	buf := data[:size]
@@ -124,7 +124,7 @@ func parseQuestion(question []byte, start int) (*DNSQuestion, int, error) {
 	class := question[end+3 : end+5]
 	return &DNSQuestion{
 		domainName,
-		Record(binary.BigEndian.Uint16(recordType)),
+		RecordType(binary.BigEndian.Uint16(recordType)),
 		Class(binary.BigEndian.Uint16(class)),
 	}, end + 5, nil
 }
@@ -152,30 +152,30 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 
 	recordPreamble := DNSRecordPreamble{
 		Name:  domainName,
-		Type:  Record(recordType),
+		Type:  RecordType(recordType),
 		Class: Class(class),
 		TTL:   ttl,
 	}
 
 	switch recordType {
-	case uint16(RecordType.A): // A record
+	case uint16(RType.A): // A record
 		return ADNSRecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
-	case uint16(RecordType.NS): // NS record
+	case uint16(RType.NS): // NS record
 		host, _, _ := decodeDomainName(record, end+11)
 		return NSDNSRecord{DNSRecordPreamble: recordPreamble, Host: host}, end + 11 + int(rdLength), nil
-	case uint16(RecordType.CNAME): // CNAME record
+	case uint16(RType.CNAME): // CNAME record
 		return CNAMERecord{DNSRecordPreamble: recordPreamble, CanonicalName: string(rdata)}, end + 11 + int(rdLength), nil
-	case uint16(RecordType.TXT): // TXT record
+	case uint16(RType.TXT): // TXT record
 		return TXTRecord{DNSRecordPreamble: recordPreamble, Text: string(rdata)}, end + 11 + int(rdLength), nil
-	case uint16(RecordType.MX): // MX record
+	case uint16(RType.MX): // MX record
 		preference := binary.BigEndian.Uint16(rdata[:2])
 		exchange, _, _ := decodeDomainName(record, end+13)
 		return MXRecord{DNSRecordPreamble: recordPreamble, Preference: preference, Exchange: exchange}, end + 11 + int(rdLength), nil
-	case uint16(RecordType.AAAA): // AAAA record
+	case uint16(RType.AAAA): // AAAA record
 		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
-	case uint16(RecordType.SOA): // SOA record
+	case uint16(RType.SOA): // SOA record
 		return SOARecord{DNSRecordPreamble: recordPreamble}, end + 11 + int(rdLength), nil
-	case uint16(RecordType.OPT): // OPT record
+	case uint16(RType.OPT): // OPT record
 		if domainName != "." {
 			return nil, -1, errors.New("Invalid OPT record domain name")
 		}

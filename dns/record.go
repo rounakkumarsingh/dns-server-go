@@ -2,30 +2,30 @@ package dns
 
 import "fmt"
 
-type Record uint16
+type RecordType uint16
 
-var RecordType = struct {
-	A     Record
-	NS    Record
-	MD    Record
-	MF    Record
-	CNAME Record
-	SOA   Record
-	MB    Record
-	MG    Record
-	MR    Record
-	NULL  Record
-	WKS   Record
-	PTR   Record
-	HINFO Record
-	MINFO Record
-	MX    Record
-	TXT   Record
-	AAAA  Record
-	SRV   Record
-	OPT   Record
-	CAA   Record
-	ANY   Record
+var RType = struct {
+	A     RecordType
+	NS    RecordType
+	MD    RecordType
+	MF    RecordType
+	CNAME RecordType
+	SOA   RecordType
+	MB    RecordType
+	MG    RecordType
+	MR    RecordType
+	NULL  RecordType
+	WKS   RecordType
+	PTR   RecordType
+	HINFO RecordType
+	MINFO RecordType
+	MX    RecordType
+	TXT   RecordType
+	AAAA  RecordType
+	SRV   RecordType
+	OPT   RecordType
+	CAA   RecordType
+	ANY   RecordType
 }{
 	A:     1,
 	NS:    2,
@@ -50,31 +50,31 @@ var RecordType = struct {
 	ANY:   255,
 }
 
-var RecordName = map[Record]string{
-	RecordType.A:     "A",
-	RecordType.NS:    "NS",
-	RecordType.MD:    "MD",
-	RecordType.MF:    "MF",
-	RecordType.CNAME: "CNAME",
-	RecordType.SOA:   "SOA",
-	RecordType.MB:    "MB",
-	RecordType.MG:    "MG",
-	RecordType.MR:    "MR",
-	RecordType.NULL:  "NULL",
-	RecordType.WKS:   "WKS",
-	RecordType.PTR:   "PTR",
-	RecordType.HINFO: "HINFO",
-	RecordType.MINFO: "MINFO",
-	RecordType.MX:    "MX",
-	RecordType.TXT:   "TXT",
-	RecordType.AAAA:  "AAAA",
-	RecordType.SRV:   "SRV",
-	RecordType.OPT:   "OPT",
-	RecordType.CAA:   "CAA",
-	RecordType.ANY:   "ANY",
+var RecordName = map[RecordType]string{
+	RType.A:     "A",
+	RType.NS:    "NS",
+	RType.MD:    "MD",
+	RType.MF:    "MF",
+	RType.CNAME: "CNAME",
+	RType.SOA:   "SOA",
+	RType.MB:    "MB",
+	RType.MG:    "MG",
+	RType.MR:    "MR",
+	RType.NULL:  "NULL",
+	RType.WKS:   "WKS",
+	RType.PTR:   "PTR",
+	RType.HINFO: "HINFO",
+	RType.MINFO: "MINFO",
+	RType.MX:    "MX",
+	RType.TXT:   "TXT",
+	RType.AAAA:  "AAAA",
+	RType.SRV:   "SRV",
+	RType.OPT:   "OPT",
+	RType.CAA:   "CAA",
+	RType.ANY:   "ANY",
 }
 
-func (r Record) String() string {
+func (r RecordType) String() string {
 	val, ok := RecordName[r]
 	if ok {
 		return val

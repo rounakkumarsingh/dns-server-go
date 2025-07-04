@@ -7,7 +7,7 @@ import (
 
 type DNSQuestion struct {
 	Domain string
-	Type   Record
+	Type   RecordType
 	Class  Class
 }
 
