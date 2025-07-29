@@ -8,6 +8,12 @@ import (
 
 func main() {
 
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println("Recovered from panic:", r)
+		}
+	}()
+
 	udpAddr, err := net.ResolveUDPAddr("udp", ":1053")
 	if err != nil {
 		log.Println("Failed to resolve UDP address:", err)

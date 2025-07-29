@@ -39,29 +39,53 @@ func handlePacket(queryBuffer []byte) (dns.DNSPacket, error) {
 		return dns.DNSPacket{}, errors.New("Only one question supported") // We only handle single question queries
 	}
 
-	dnsServer := getRandomDNSServer(RootServers)
-
-	responsePacket := dns.DNSPacket{Header: dnsQuery.Header}
-
-	answers, err := resolve(dnsServer, dnsQuery.Questions[0].Domain, dnsQuery.Questions[0].Type)
-	if err != nil {
-		log.Println("Failed to resolve DNS query:", err)
-		return dns.DNSPacket{}, err
+	responseHeader := dns.DNSHeader{
+		ID:      dnsQuery.Header.ID,
+		QR:      1, // Response
+		OPCODE:  dnsQuery.Header.OPCODE,
+		AA:      0, // Not authoritative
+		TC:      0, // Not truncated
+		RD:      dnsQuery.Header.RD,
+		RA:      1, // Recursion available
+		Z:       0,
+		AD:      0,
+		CD:      0,
+		RCODE:   dns.DNSResponseCodeType.NoError,
+		QDCOUNT: dnsQuery.Header.QDCOUNT,
+		ANCOUNT: 0,
+		NSCOUNT: 0,
+		ARCOUNT: 0,
 	}
 
-	responsePacket.Answers = answers
+	responsePacket := dns.DNSPacket{Header: responseHeader, Questions: dnsQuery.Questions}
+
+	answers, err := resolve(getRandomDNSServer(RootServers), dnsQuery.Questions[0].Domain, dnsQuery.Questions[0].Type, 0)
+	if err != nil {
+		log.Println("Failed to resolve DNS query:", err)
+		if rescodeErr, ok := err.(RESCODEError); ok {
+			responsePacket.Header.RCODE = rescodeErr.Code
+		} else {
+			responsePacket.Header.RCODE = dns.DNSResponseCodeType.ServerFailure
+		}
+	} else {
+		responsePacket.Answers = answers
+		responsePacket.Header.ANCOUNT = uint16(len(answers))
+	}
 
 	for _, additionalRecord := range dnsQuery.Additional {
 		if record, ok := additionalRecord.(dns.OPTRecord); ok {
 			responsePacket.Additional = append(responsePacket.Additional, record)
 		}
 	}
+	responsePacket.Header.ARCOUNT = uint16(len(responsePacket.Additional))
 
 	return responsePacket, nil
 }
 
 // queryOverTCP is used by the query function to handle truncated DNS responses over TCP.
 func queryOverTCP(dnsServer net.IP, query dns.DNSPacket) ([]byte, error) {
+	log.Printf("Dialing DNS server over TCP: %s", dnsServer.String())
+
 	dnsServerAddr := &net.TCPAddr{
 		IP:   dnsServer,
 		Port: 53,
@@ -113,8 +137,12 @@ func query(dnsServerAddr net.IP, query dns.DNSPacket) (*dns.DNSPacket, error) {
 	}
 
 	var localAddress = &net.UDPAddr{
-		IP:   net.IPv4zero, // Use any available local address
-		Port: 0,            // Use any available local port
+		IP:   net.IPv4zero,
+		Port: 0,
+	}
+
+	if dnsServerAddr.To4() == nil {
+		localAddress.IP = net.IPv6zero
 	}
 
 	forwardConn, err := net.DialUDP("udp", localAddress, &dnsServer)
@@ -168,23 +196,57 @@ func query(dnsServerAddr net.IP, query dns.DNSPacket) (*dns.DNSPacket, error) {
 	return parsedResponse, nil
 }
 
-func getRandomDNSServer(map[string][]net.IP) net.IP {
-	keys := make([]string, 0, len(RootServers))
-	for k := range RootServers {
+func getRandomDNSServer(servers map[string][]net.IP) net.IP {
+	keys := make([]string, 0, len(servers))
+	for k := range servers {
 		keys = append(keys, k)
 	}
-	randomKey := keys[rand.Intn(len(keys))]
-	server := RootServers[randomKey]
-	k := rand.Intn(len(server))
-	for server[k].To4() == nil {
-		k = rand.Intn(len(server))
-	}
-	return server[k]
 
-	// return net.IP{1, 1, 1, 1} // Placeholder for a random DNS server IP
+	serverDomain := keys[rand.Intn(len(keys))]
+	server := servers[serverDomain]
+
+	if len(server) == 0 {
+		packets, err := resolve(getRandomDNSServer(RootServers), serverDomain, dns.RType.A, 0)
+		if err != nil {
+			log.Println("Failed to resolve nameserver domain:", err)
+			return nil
+		}
+		for _, record := range packets {
+			if aRecord, ok := record.(dns.ADNSRecord); ok {
+				server = append(server, aRecord.IP)
+			} else if aaaaRecord, ok := record.(dns.AAAARecord); ok {
+				server = append(server, aaaaRecord.IP)
+			}
+		}
+	}
+
+	// Prefer IPv4 addresses
+	ipv4s := []net.IP{}
+	for _, ip := range server {
+		if ip.To4() != nil {
+			ipv4s = append(ipv4s, ip)
+		}
+	}
+
+	if len(ipv4s) > 0 {
+		k := rand.Intn(len(ipv4s))
+		return ipv4s[k]
+	}
+
+	if len(server) == 0 {
+		log.Println("No valid IP addresses found for nameserver domain:", serverDomain)
+		return nil
+	}
+
+	// Fallback to IPv6 if no IPv4 is available
+	k := rand.Intn(len(server))
+	return server[k]
 }
 
-func resolve(dnsServer net.IP, domain string, recordType dns.RecordType) ([]dns.DNSRecord, error) {
+func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth uint) ([]dns.DNSRecord, error) {
+	if depth >= 10 {
+		return nil, errors.New("resolution depth limit exceeded")
+	}
 	dnsQueryPacket := dns.DNSPacket{
 		Header: dns.DNSHeader{
 			ID:      uint16(rand.Intn(65536)), // Random ID for the DNS query
@@ -205,17 +267,20 @@ func resolve(dnsServer net.IP, domain string, recordType dns.RecordType) ([]dns.
 
 	responsePacket, err := query(dnsServer, dnsQueryPacket)
 	if err != nil {
-		// Error -> QDCOUNT != len(questions)
 		return nil, err
 	}
 
 	if responsePacket.Header.RCODE != dns.DNSResponseCodeType.NoError {
 		err := RESCODEError{responsePacket.Header.RCODE}
-		var dnsReecord []dns.DNSRecord = nil
+		var dnsRecord []dns.DNSRecord = nil
 		if responsePacket.Header.RCODE == dns.DNSResponseCodeType.NameError {
-			// SOA
+			for _, authorative := range responsePacket.Authoratives {
+				if authorative.Preamble().Type == dns.RType.SOA {
+					dnsRecord = append(dnsRecord, authorative)
+				}
+			}
 		}
-		return dnsReecord, err
+		return dnsRecord, err
 	}
 
 	for _, answer := range responsePacket.Answers {
@@ -226,9 +291,12 @@ func resolve(dnsServer net.IP, domain string, recordType dns.RecordType) ([]dns.
 
 	for _, answer := range responsePacket.Answers {
 		if answer.Preamble().Type == dns.RType.CNAME {
-			record := answer.(dns.CNAMERecord)
+			record, ok := answer.(dns.CNAMERecord)
+			if !ok {
+				panic("Preamble type is CNAME but can't be made into CNAME DNS record")
+			}
 			cnameTarget := record.CanonicalName
-			resolved, err := resolve(dnsServer, cnameTarget, dns.RType.CNAME)
+			resolved, err := resolve(dnsServer, cnameTarget, recordType, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -256,13 +324,13 @@ func resolve(dnsServer net.IP, domain string, recordType dns.RecordType) ([]dns.
 		}
 	}
 
-	responsePacket.Header.ANCOUNT = uint16(len(responsePacket.Answers))
-	responsePacket.Header.NSCOUNT = uint16(len(responsePacket.Authoratives))
-	responsePacket.Header.ARCOUNT = uint16(len(responsePacket.Additional))
 	if len(nsServers) == 0 {
 		log.Println("No nameservers found in response, using root servers")
 		nsServers = RootServers
 	}
 	nextDNSServer := getRandomDNSServer(nsServers)
-	return resolve(nextDNSServer, domain, recordType)
+	if nextDNSServer == nil {
+		return nil, errors.New("no valid nameservers found for domain: " + domain)
+	}
+	return resolve(nextDNSServer, domain, recordType, depth+1)
 }
