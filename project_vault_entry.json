@@ -1,0 +1,23 @@
+{
+  "id": "dns_server_go",
+  "title": "DNS Server Go",
+  "tagline": "Recursive DNS resolver with UDP/TCP handling and TTL caching implemented in Go.",
+  "github_url": "https://github.com/rounakkumarsingh/dns-server-go",
+  "tech_stack": ["Go", "UDP", "TCP", "DNS"],
+  "concepts": ["networking", "protocol implementation", "parsing", "recursion", "caching", "concurrency"],
+  "bullets": [
+    "Implemented UDP listener on port 1053 to accept DNS queries and dispatch goroutine-based handlers per request.",
+    "Parsed DNS headers, questions, answers, authority, and additional sections with domain name compression support.",
+    "Constructed DNS response headers and serialized packets with strict count validation to avoid malformed responses.",
+    "Resolved queries recursively from root name servers, following NS referrals and CNAME chains with a depth limit of 10.",
+    "Preferred IPv4 upstream addresses when selecting nameservers and fell back to IPv6 when none were available.",
+    "Retried truncated UDP responses over TCP to obtain complete answers when the TC flag is set.",
+    "Cached responses by domain and record type using minimum TTL or SOA minimum TTL values and scheduled periodic cleanup.",
+    "Propagated EDNS0 OPT additional records from client queries into responses while honoring recursion desired and available flags.",
+    "Supported encoding of A, AAAA, NS, MX, CNAME, TXT, SOA, PTR, and OPT records through dedicated serializers."
+  ],
+  "architecture": "The entrypoint binds UDP port 1053, reading queries into goroutine handlers that parse packets and construct responses via the dns package. A recursive resolver contacts upstream name servers starting from the root set, prefers IPv4, follows NS referrals and CNAME chains up to a depth limit, and falls back to TCP when UDP responses are truncated. A TTL-aware cache stores answers keyed by domain and type, with periodic cleanup, while EDNS0 OPT additional records are preserved in responses.",
+  "complexity": "medium",
+  "created_at": "2026-02-17",
+  "last_updated": "2026-02-17"
+}
