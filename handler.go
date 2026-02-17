@@ -28,7 +28,7 @@ var RootServers = map[string][]net.IP{
 	"M": {net.ParseIP("202.12.27.33"), net.ParseIP("2001:dc3::35")},
 }
 
-func handlePacket(queryBuffer []byte) (dns.DNSPacket, error) {
+func handlePacket(queryBuffer []byte, cache *DNSCache) (dns.DNSPacket, error) {
 	dnsQuery, err := dns.ParseDNSPacket(queryBuffer, len(queryBuffer))
 	if err != nil {
 		log.Println("Failed to parse DNS packet:", err)
@@ -36,7 +36,13 @@ func handlePacket(queryBuffer []byte) (dns.DNSPacket, error) {
 	}
 
 	if dnsQuery.Header.QDCOUNT != 1 {
-		return dns.DNSPacket{}, errors.New("Only one question supported") // We only handle single question queries
+		return dns.DNSPacket{}, errors.New("only one question supported") // We only handle single question queries
+	}
+
+	question := dnsQuery.Questions[0]
+	if cachedResponse, found := cache.Get(question.Domain, question.Type); found {
+		cachedResponse.Header.ID = dnsQuery.Header.ID
+		return cachedResponse, nil
 	}
 
 	responseHeader := dns.DNSHeader{
@@ -59,7 +65,7 @@ func handlePacket(queryBuffer []byte) (dns.DNSPacket, error) {
 
 	responsePacket := dns.DNSPacket{Header: responseHeader, Questions: dnsQuery.Questions}
 
-	answers, err := resolve(getRandomDNSServer(RootServers), dnsQuery.Questions[0].Domain, dnsQuery.Questions[0].Type, 0)
+	answers, err := resolve(getRandomDNSServer(RootServers), question.Domain, question.Type, 0)
 	if err != nil {
 		log.Println("Failed to resolve DNS query:", err)
 		if rescodeErr, ok := err.(RESCODEError); ok {
@@ -70,6 +76,7 @@ func handlePacket(queryBuffer []byte) (dns.DNSPacket, error) {
 	} else {
 		responsePacket.Answers = answers
 		responsePacket.Header.ANCOUNT = uint16(len(answers))
+		cache.Set(question.Domain, question.Type, responsePacket)
 	}
 
 	for _, additionalRecord := range dnsQuery.Additional {

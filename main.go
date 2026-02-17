@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 )
 
 func main() {
@@ -29,6 +30,9 @@ func main() {
 
 	buf := make([]byte, 4096) // 4KB buffer
 
+	cache := NewDNSCache()
+	cache.StartCleanup(5 * time.Minute)
+
 	for {
 		n, clientAddr, err := udpConn.ReadFromUDP(buf)
 		if err != nil {
@@ -36,24 +40,25 @@ func main() {
 			continue
 		}
 
-		responsePacket, err := handlePacket(buf[:n])
-		if err != nil {
-			log.Println("Failed to handle DNS packet:", err)
-			continue
-		}
+		go func(clientAddr *net.UDPAddr, packet []byte) {
+			responsePacket, err := handlePacket(packet, cache)
+			if err != nil {
+				log.Println("Failed to handle DNS packet:", err)
+				return
+			}
 
-		fmt.Println(responsePacket)
-		updatedPacket, err := responsePacket.ToBytes()
-		if err != nil {
-			log.Println("Failed to convert DNS packet to bytes:", err)
-			continue
-		}
+			fmt.Println(responsePacket)
+			updatedPacket, err := responsePacket.ToBytes()
+			if err != nil {
+				log.Println("Failed to convert DNS packet to bytes:", err)
+				return
+			}
 
-		_, err = udpConn.WriteToUDP(updatedPacket, clientAddr)
-		if err != nil {
-			log.Println("Failed to send response to client:", err)
-			continue
-		}
+			_, err = udpConn.WriteToUDP(updatedPacket, clientAddr)
+			if err != nil {
+				log.Println("Failed to send response to client:", err)
+			}
+		}(clientAddr, buf[:n])
 	}
 
 }
