@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"hash/fnv"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,22 +16,52 @@ type CacheEntry struct {
 	Expiry   time.Time
 }
 
-type DNSCache struct {
+type CacheShard struct {
 	mu      sync.RWMutex
 	entries map[string]CacheEntry
 }
 
+type DNSCache struct {
+	shards     []*CacheShard
+	shardCount int
+}
+
 func NewDNSCache() *DNSCache {
-	return &DNSCache{
-		entries: make(map[string]CacheEntry),
+	shardCount := 32
+	if val, ok := os.LookupEnv("DNS_CACHE_SHARDS"); ok {
+		if i, err := strconv.Atoi(val); err == nil && i > 0 {
+			shardCount = i
+		}
 	}
+
+	c := &DNSCache{
+		shards:     make([]*CacheShard, shardCount),
+		shardCount: shardCount,
+	}
+
+	for i := 0; i < shardCount; i++ {
+		c.shards[i] = &CacheShard{
+			entries: make(map[string]CacheEntry),
+		}
+	}
+
+	return c
+}
+
+func (c *DNSCache) getShard(key string) *CacheShard {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return c.shards[uint(h.Sum32())%uint(c.shardCount)]
 }
 
 func (c *DNSCache) Get(domain string, recordType dns.RecordType) (dns.DNSPacket, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	key := fmt.Sprintf("%s:%s", domain, recordType)
-	entry, found := c.entries[key]
+	shard := c.getShard(key)
+
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+
+	entry, found := shard.entries[key]
 	if found && time.Now().Before(entry.Expiry) {
 		return entry.Response, true
 	}
@@ -36,9 +69,6 @@ func (c *DNSCache) Get(domain string, recordType dns.RecordType) (dns.DNSPacket,
 }
 
 func (c *DNSCache) Set(domain string, recordType dns.RecordType, response dns.DNSPacket) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	minTTL := -1
 
 	for _, ans := range response.Answers {
@@ -69,23 +99,32 @@ func (c *DNSCache) Set(domain string, recordType dns.RecordType, response dns.DN
 
 	key := fmt.Sprintf("%s:%s", domain, recordType)
 	expiry := time.Now().Add(time.Duration(minTTL) * time.Second)
-	c.entries[key] = CacheEntry{
+
+	shard := c.getShard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	shard.entries[key] = CacheEntry{
 		Response: response,
 		Expiry:   expiry,
 	}
 }
 
 func (c *DNSCache) StartCleanup(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	go func() {
-		for range ticker.C {
-			c.mu.Lock()
-			for key, entry := range c.entries {
-				if time.Now().After(entry.Expiry) {
-					delete(c.entries, key)
+	for i := 0; i < c.shardCount; i++ {
+		shard := c.shards[i]
+		go func(s *CacheShard) {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for range ticker.C {
+				s.mu.Lock()
+				for key, entry := range s.entries {
+					if time.Now().After(entry.Expiry) {
+						delete(s.entries, key)
+					}
 				}
+				s.mu.Unlock()
 			}
-			c.mu.Unlock()
-		}
-	}()
+		}(shard)
+	}
 }
