@@ -286,11 +286,11 @@ func (r SOARecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, erro
 	buf = append(buf, rNameData...)
 
 	// Append the numeric fields
-	binary.BigEndian.PutUint32(buf, r.Serial)
-	binary.BigEndian.PutUint32(buf[4:], r.Refresh)
-	binary.BigEndian.PutUint32(buf[8:], r.Retry)
-	binary.BigEndian.PutUint32(buf[12:], r.Expire)
-	binary.BigEndian.PutUint32(buf[16:], r.MinimumTTL)
+	buf = binary.BigEndian.AppendUint32(buf, r.Serial)
+	buf = binary.BigEndian.AppendUint32(buf, r.Refresh)
+	buf = binary.BigEndian.AppendUint32(buf, r.Retry)
+	buf = binary.BigEndian.AppendUint32(buf, r.Expire)
+	buf = binary.BigEndian.AppendUint32(buf, r.MinimumTTL)
 
 	return buf, nil
 }
@@ -411,4 +411,35 @@ func (r OPTRecord) String() string {
 		str += "\tOptions: none\n"
 	}
 	return str
+}
+
+// UnknownRecord holds a record of a type this package doesn't decode, with its
+// RDATA kept verbatim so it can be passed through unchanged.
+type UnknownRecord struct {
+	DNSRecordPreamble
+	Data []byte
+}
+
+func (r UnknownRecord) Preamble() DNSRecordPreamble {
+	return r.DNSRecordPreamble
+}
+
+func (r UnknownRecord) ToBytes(offsetMap map[string]uint, offSet uint) ([]byte, error) {
+	buf, err := r.DNSRecordPreamble.ToBytes(offsetMap, offSet)
+	if err != nil {
+		return nil, err
+	}
+
+	rdLengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdLengthBytes, uint16(len(r.Data)))
+
+	buf = append(buf, rdLengthBytes...)
+	buf = append(buf, r.Data...)
+
+	return buf, nil
+}
+
+func (r UnknownRecord) String() string {
+	return r.DNSRecordPreamble.String() + "\n" +
+		"\tData: " + fmt.Sprintf("%x", r.Data)
 }

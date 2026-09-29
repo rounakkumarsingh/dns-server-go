@@ -86,7 +86,8 @@ func (c *DNSCache) Set(domain string, recordType dns.RecordType, response dns.DN
 		// No answers, check authority records for SOA
 		for _, auth := range response.Authoratives {
 			if soa, ok := auth.(dns.SOARecord); ok {
-				minTTL = int(soa.MinimumTTL)
+				// RFC 2308: negative TTL is the lesser of the SOA's TTL and MINIMUM.
+				minTTL = int(min(soa.TTL, soa.MinimumTTL))
 				break
 			}
 		}

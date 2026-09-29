@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/rounakkumarsingh/dns-server/dns"
@@ -65,10 +66,15 @@ func handlePacket(queryBuffer []byte, cache *DNSCache) (dns.DNSPacket, error) {
 
 	responsePacket := dns.DNSPacket{Header: responseHeader, Questions: dnsQuery.Questions}
 
-	answers, err := resolve(getRandomDNSServer(RootServers), question.Domain, question.Type, 0)
+	answers, soaRecords, err := resolve(getRandomDNSServer(RootServers), question.Domain, question.Type, 0)
 	if err != nil {
 		log.Println("Failed to resolve DNS query:", err)
-		if rescodeErr, ok := err.(RESCODEError); ok {
+		if rescodeErr, ok := err.(RESCODEError); ok && rescodeErr.Code == dns.DNSResponseCodeType.NameError {
+			responsePacket.Header.RCODE = rescodeErr.Code
+			responsePacket.Authoratives = soaRecords
+			responsePacket.Header.NSCOUNT = uint16(len(soaRecords))
+			cache.Set(question.Domain, question.Type, responsePacket)
+		} else if ok {
 			responsePacket.Header.RCODE = rescodeErr.Code
 		} else {
 			responsePacket.Header.RCODE = dns.DNSResponseCodeType.ServerFailure
@@ -76,6 +82,8 @@ func handlePacket(queryBuffer []byte, cache *DNSCache) (dns.DNSPacket, error) {
 	} else {
 		responsePacket.Answers = answers
 		responsePacket.Header.ANCOUNT = uint16(len(answers))
+		responsePacket.Authoratives = soaRecords
+		responsePacket.Header.NSCOUNT = uint16(len(soaRecords))
 		cache.Set(question.Domain, question.Type, responsePacket)
 	}
 
@@ -213,7 +221,7 @@ func getRandomDNSServer(servers map[string][]net.IP) net.IP {
 	server := servers[serverDomain]
 
 	if len(server) == 0 {
-		packets, err := resolve(getRandomDNSServer(RootServers), serverDomain, dns.RType.A, 0)
+		packets, _, err := resolve(getRandomDNSServer(RootServers), serverDomain, dns.RType.A, 0)
 		if err != nil {
 			log.Println("Failed to resolve nameserver domain:", err)
 			return nil
@@ -250,9 +258,16 @@ func getRandomDNSServer(servers map[string][]net.IP) net.IP {
 	return server[k]
 }
 
-func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth uint) ([]dns.DNSRecord, error) {
+// sendQuery performs a single upstream query. It is a variable so tests can
+// substitute canned responses for the network.
+var sendQuery = query
+
+// resolve returns the answer records for domain/recordType. The second return
+// value carries the SOA records from the authority section of a negative
+// response (NXDOMAIN, or NOERROR with no data), for negative caching.
+func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth uint) ([]dns.DNSRecord, []dns.DNSRecord, error) {
 	if depth >= 10 {
-		return nil, errors.New("resolution depth limit exceeded")
+		return nil, nil, errors.New("resolution depth limit exceeded")
 	}
 	dnsQueryPacket := dns.DNSPacket{
 		Header: dns.DNSHeader{
@@ -272,50 +287,70 @@ func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth u
 		Additional: []dns.DNSRecord{},
 	}
 
-	responsePacket, err := query(dnsServer, dnsQueryPacket)
+	responsePacket, err := sendQuery(dnsServer, dnsQueryPacket)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if responsePacket.Header.RCODE != dns.DNSResponseCodeType.NoError {
-		err := RESCODEError{responsePacket.Header.RCODE}
-		var dnsRecord []dns.DNSRecord = nil
+		var soaRecords []dns.DNSRecord
 		if responsePacket.Header.RCODE == dns.DNSResponseCodeType.NameError {
-			for _, authorative := range responsePacket.Authoratives {
-				if authorative.Preamble().Type == dns.RType.SOA {
-					dnsRecord = append(dnsRecord, authorative)
-				}
-			}
+			soaRecords = filterSOA(responsePacket.Authoratives)
 		}
-		return dnsRecord, err
+		return nil, soaRecords, RESCODEError{responsePacket.Header.RCODE}
 	}
 
-	for _, answer := range responsePacket.Answers {
-		if answer.Preamble().Type == recordType && answer.Preamble().Name == domain {
-			return responsePacket.Answers, nil
+	// Follow any CNAME chain contained in the answer section itself.
+	var chain []dns.DNSRecord
+	name := domain
+	for range len(responsePacket.Answers) + 1 {
+		var matches []dns.DNSRecord
+		var cname *dns.CNAMERecord
+		for _, answer := range responsePacket.Answers {
+			if !strings.EqualFold(answer.Preamble().Name, name) {
+				continue
+			}
+			if answer.Preamble().Type == recordType {
+				matches = append(matches, answer)
+			} else if record, ok := answer.(dns.CNAMERecord); ok && cname == nil {
+				cname = &record
+			}
 		}
+		if len(matches) > 0 {
+			return append(chain, matches...), nil, nil
+		}
+		if cname == nil {
+			break
+		}
+		chain = append(chain, *cname)
+		name = cname.CanonicalName
 	}
 
-	for _, answer := range responsePacket.Answers {
-		if answer.Preamble().Type == dns.RType.CNAME {
-			record, ok := answer.(dns.CNAMERecord)
-			if !ok {
-				panic("Preamble type is CNAME but can't be made into CNAME DNS record")
-			}
-			cnameTarget := record.CanonicalName
-			resolved, err := resolve(dnsServer, cnameTarget, recordType, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			return append([]dns.DNSRecord{answer}, resolved...), nil
+	if len(chain) > 0 {
+		// The target may live in a different zone, so resolve it from the root.
+		resolved, soaRecords, err := resolve(getRandomDNSServer(RootServers), name, recordType, depth+1)
+		if err != nil {
+			return nil, soaRecords, err
 		}
+		return append(chain, resolved...), soaRecords, nil
 	}
 
 	nsServers := make(map[string][]net.IP)
 
-	for _, nsRecord := range responsePacket.Authoratives {
-		record := nsRecord.(dns.NSDNSRecord)
-		nsServers[record.Host] = []net.IP{}
+	for _, authoritative := range responsePacket.Authoratives {
+		if record, ok := authoritative.(dns.NSDNSRecord); ok {
+			nsServers[record.Host] = []net.IP{}
+		}
+	}
+
+	if len(nsServers) == 0 {
+		soaRecords := filterSOA(responsePacket.Authoratives)
+		if responsePacket.Header.AA == 1 || len(soaRecords) > 0 {
+			// NOERROR with no answer and no referral: the name exists but has
+			// no records of this type (NODATA, RFC 2308).
+			return nil, soaRecords, nil
+		}
+		return nil, nil, errors.New("no answer or referral for domain: " + domain)
 	}
 
 	for _, additionalRecord := range responsePacket.Additional {
@@ -331,13 +366,19 @@ func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth u
 		}
 	}
 
-	if len(nsServers) == 0 {
-		log.Println("No nameservers found in response, using root servers")
-		nsServers = RootServers
-	}
 	nextDNSServer := getRandomDNSServer(nsServers)
 	if nextDNSServer == nil {
-		return nil, errors.New("no valid nameservers found for domain: " + domain)
+		return nil, nil, errors.New("no valid nameservers found for domain: " + domain)
 	}
 	return resolve(nextDNSServer, domain, recordType, depth+1)
+}
+
+func filterSOA(records []dns.DNSRecord) []dns.DNSRecord {
+	var soaRecords []dns.DNSRecord
+	for _, record := range records {
+		if _, ok := record.(dns.SOARecord); ok {
+			soaRecords = append(soaRecords, record)
+		}
+	}
+	return soaRecords
 }

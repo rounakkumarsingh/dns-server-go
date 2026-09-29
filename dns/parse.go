@@ -164,7 +164,17 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 		host, _, _ := decodeDomainName(record, end+11)
 		return NSDNSRecord{DNSRecordPreamble: recordPreamble, Host: host}, end + 11 + int(rdLength), nil
 	case uint16(RType.CNAME): // CNAME record
-		return CNAMERecord{DNSRecordPreamble: recordPreamble, CanonicalName: string(rdata)}, end + 11 + int(rdLength), nil
+		canonicalName, _, err := decodeDomainName(record, end+11)
+		if err != nil {
+			return nil, -1, err
+		}
+		return CNAMERecord{DNSRecordPreamble: recordPreamble, CanonicalName: canonicalName}, end + 11 + int(rdLength), nil
+	case uint16(RType.PTR): // PTR record
+		pointer, _, err := decodeDomainName(record, end+11)
+		if err != nil {
+			return nil, -1, err
+		}
+		return PTRRecord{DNSRecordPreamble: recordPreamble, Pointer: pointer}, end + 11 + int(rdLength), nil
 	case uint16(RType.TXT): // TXT record
 		return TXTRecord{DNSRecordPreamble: recordPreamble, Text: string(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RType.MX): // MX record
@@ -174,7 +184,29 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 	case uint16(RType.AAAA): // AAAA record
 		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RType.SOA): // SOA record
-		return SOARecord{DNSRecordPreamble: recordPreamble}, end + 11 + int(rdLength), nil
+		rdataEnd := end + 11 + int(rdLength)
+		mName, mEnd, err := decodeDomainName(record, end+11)
+		if err != nil {
+			return nil, -1, err
+		}
+		rName, rEnd, err := decodeDomainName(record, mEnd+1)
+		if err != nil {
+			return nil, -1, err
+		}
+		if rEnd+1+20 > rdataEnd {
+			return nil, -1, errors.New("Invalid SOA record")
+		}
+		fields := record[rEnd+1 : rEnd+1+20]
+		return SOARecord{
+			DNSRecordPreamble: recordPreamble,
+			MName:             mName,
+			RName:             rName,
+			Serial:            binary.BigEndian.Uint32(fields[0:4]),
+			Refresh:           binary.BigEndian.Uint32(fields[4:8]),
+			Retry:             binary.BigEndian.Uint32(fields[8:12]),
+			Expire:            binary.BigEndian.Uint32(fields[12:16]),
+			MinimumTTL:        binary.BigEndian.Uint32(fields[16:20]),
+		}, rdataEnd, nil
 	case uint16(RType.OPT): // OPT record
 		if domainName != "." {
 			return nil, -1, errors.New("Invalid OPT record domain name")
@@ -209,6 +241,10 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 			Options:  options,
 		}, end + 11 + int(rdLength), nil
 	default:
-		return nil, -1, errors.New("Unknown record type")
+		// Keep records of types we don't decode as opaque RDATA (RFC 3597) so
+		// a single unfamiliar record doesn't make the whole packet unusable.
+		data := make([]byte, len(rdata))
+		copy(data, rdata)
+		return UnknownRecord{DNSRecordPreamble: recordPreamble, Data: data}, end + 11 + int(rdLength), nil
 	}
 }

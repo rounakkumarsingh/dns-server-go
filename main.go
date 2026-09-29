@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -28,37 +29,56 @@ func main() {
 	}
 	defer udpConn.Close()
 
-	buf := make([]byte, 4096) // 4KB buffer
-
 	cache := NewDNSCache()
 	cache.StartCleanup(5 * time.Minute)
+
+	serve(udpConn, func(packet []byte) ([]byte, error) {
+		responsePacket, err := handlePacket(packet, cache)
+		if err != nil {
+			return nil, err
+		}
+
+		fmt.Println(responsePacket)
+		return responsePacket.ToBytes()
+	})
+}
+
+// serve reads queries from udpConn and answers each one in its own goroutine.
+// handle receives a private copy of the query, so it is safe to use after the
+// read buffer has been reused for the next packet.
+func serve(udpConn *net.UDPConn, handle func(packet []byte) ([]byte, error)) {
+	buf := make([]byte, 4096) // 4KB buffer
 
 	for {
 		n, clientAddr, err := udpConn.ReadFromUDP(buf)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			log.Println("Failed to read from UDP:", err)
 			continue
 		}
 
+		packet := make([]byte, n)
+		copy(packet, buf[:n])
+
 		go func(clientAddr *net.UDPAddr, packet []byte) {
-			responsePacket, err := handlePacket(packet, cache)
+			defer func() {
+				if r := recover(); r != nil {
+					log.Println("Recovered from panic while handling packet:", r)
+				}
+			}()
+
+			response, err := handle(packet)
 			if err != nil {
 				log.Println("Failed to handle DNS packet:", err)
 				return
 			}
 
-			fmt.Println(responsePacket)
-			updatedPacket, err := responsePacket.ToBytes()
-			if err != nil {
-				log.Println("Failed to convert DNS packet to bytes:", err)
-				return
-			}
-
-			_, err = udpConn.WriteToUDP(updatedPacket, clientAddr)
+			_, err = udpConn.WriteToUDP(response, clientAddr)
 			if err != nil {
 				log.Println("Failed to send response to client:", err)
 			}
-		}(clientAddr, buf[:n])
+		}(clientAddr, packet)
 	}
-
 }
