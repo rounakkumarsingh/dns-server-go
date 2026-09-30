@@ -13,7 +13,7 @@ func TestCacheBasic(t *testing.T) {
 	cache := NewDNSCache()
 	domain := "example.com."
 	recordType := dns.RType.A
-	
+
 	packet := dns.DNSPacket{
 		Answers: []dns.DNSRecord{
 			dns.ADNSRecord{
@@ -44,7 +44,7 @@ func TestCacheExpiration(t *testing.T) {
 	cache := NewDNSCache()
 	domain := "expire.com."
 	recordType := dns.RType.A
-	
+
 	packet := dns.DNSPacket{
 		Answers: []dns.DNSRecord{
 			dns.ADNSRecord{

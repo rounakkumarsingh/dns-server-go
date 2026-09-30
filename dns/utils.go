@@ -50,11 +50,11 @@ func decodeDomainName(encodedDomainName []byte, start int) (string, int, error) 
 				return "", -1, errors.New("Compression pointer out of bounds")
 			}
 			offset := int(binary.BigEndian.Uint16(encodedDomainName[i:i+2]) & 0x3FFF)
-			if offset >= len(encodedDomainName) || offset < 0 {
+			// Only allow pointers to data before the start of the name being
+			// decoded. Each hop then moves strictly backwards, so a crafted
+			// packet can't make this recurse forever.
+			if offset >= start {
 				return "", -1, errors.New("Invalid compression pointer")
-			}
-			if encodedDomainName[offset]&0xC0 == 0xC0 {
-				return "", -1, errors.New("Invalid compression pointer to another compression pointer")
 			}
 			value, _, err := decodeDomainName(encodedDomainName, offset)
 			if err != nil {

@@ -11,7 +11,7 @@ func BenchmarkHandlePacketCacheHit(b *testing.B) {
 	cache := NewDNSCache()
 	domain := "google.com."
 	recordType := dns.RType.A
-	
+
 	packet := dns.DNSPacket{
 		Header: dns.DNSHeader{
 			ANCOUNT: 1,

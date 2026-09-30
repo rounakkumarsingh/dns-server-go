@@ -26,7 +26,7 @@ WORKDIR /app
 
 COPY --from=builder /app/dns-server .
 
-EXPOSE 53/udp
+EXPOSE 1053/udp
 
 ENTRYPOINT ["./dns-server"]
 ```
@@ -68,6 +68,6 @@ Since your requirements are low scalability and standard availability, here are 
       --image gcr.io/your-project-id/your-image-name:latest \
       --platform managed \
       --region your-region \
-      --port 53 \
+      --port 1053 \
       --protocol udp
     ```

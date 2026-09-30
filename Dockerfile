@@ -17,6 +17,6 @@ WORKDIR /app
 
 COPY --from=builder /app/dns-server .
 
-EXPOSE 53/udp
+EXPOSE 1053/udp
 
 ENTRYPOINT ["./dns-server"]

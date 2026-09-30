@@ -7,6 +7,10 @@ import (
 	"net"
 )
 
+// ErrTruncated is returned by ParseDNSPacket when the TC bit is set, meaning the
+// full response has to be fetched over TCP.
+var ErrTruncated = errors.New("Truncated DNS packet")
+
 func ParseDNSPacket(data []byte, size int) (*DNSPacket, error) {
 
 	if size < 12 {
@@ -18,7 +22,7 @@ func ParseDNSPacket(data []byte, size int) (*DNSPacket, error) {
 	header := parseHeader(headerBytes)
 
 	if header.TC == 1 {
-		return nil, errors.New("Truncated DNS packet")
+		return nil, ErrTruncated
 	}
 
 	curr := 12 // Start after the header
@@ -149,6 +153,9 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 	}
 
 	rdata := record[end+11 : end+11+int(rdLength)]
+	if n, ok := fixedRDataLength[RecordType(recordType)]; ok && len(rdata) < n {
+		return nil, -1, fmt.Errorf("RDATA too short for %s record: %d bytes", RecordType(recordType), len(rdata))
+	}
 
 	recordPreamble := DNSRecordPreamble{
 		Name:  domainName,
@@ -159,12 +166,22 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 
 	switch recordType {
 	case uint16(RType.A): // A record
-		return ADNSRecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
+		return ADNSRecord{DNSRecordPreamble: recordPreamble, IP: net.IP(append([]byte(nil), rdata[:4]...))}, end + 11 + int(rdLength), nil
 	case uint16(RType.NS): // NS record
 		host, _, _ := decodeDomainName(record, end+11)
 		return NSDNSRecord{DNSRecordPreamble: recordPreamble, Host: host}, end + 11 + int(rdLength), nil
 	case uint16(RType.CNAME): // CNAME record
-		return CNAMERecord{DNSRecordPreamble: recordPreamble, CanonicalName: string(rdata)}, end + 11 + int(rdLength), nil
+		canonicalName, _, err := decodeDomainName(record, end+11)
+		if err != nil {
+			return nil, -1, err
+		}
+		return CNAMERecord{DNSRecordPreamble: recordPreamble, CanonicalName: canonicalName}, end + 11 + int(rdLength), nil
+	case uint16(RType.PTR): // PTR record
+		pointer, _, err := decodeDomainName(record, end+11)
+		if err != nil {
+			return nil, -1, err
+		}
+		return PTRRecord{DNSRecordPreamble: recordPreamble, Pointer: pointer}, end + 11 + int(rdLength), nil
 	case uint16(RType.TXT): // TXT record
 		return TXTRecord{DNSRecordPreamble: recordPreamble, Text: string(rdata)}, end + 11 + int(rdLength), nil
 	case uint16(RType.MX): // MX record
@@ -172,9 +189,31 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 		exchange, _, _ := decodeDomainName(record, end+13)
 		return MXRecord{DNSRecordPreamble: recordPreamble, Preference: preference, Exchange: exchange}, end + 11 + int(rdLength), nil
 	case uint16(RType.AAAA): // AAAA record
-		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(rdata)}, end + 11 + int(rdLength), nil
+		return AAAARecord{DNSRecordPreamble: recordPreamble, IP: net.IP(append([]byte(nil), rdata[:16]...))}, end + 11 + int(rdLength), nil
 	case uint16(RType.SOA): // SOA record
-		return SOARecord{DNSRecordPreamble: recordPreamble}, end + 11 + int(rdLength), nil
+		rdataEnd := end + 11 + int(rdLength)
+		mName, mEnd, err := decodeDomainName(record, end+11)
+		if err != nil {
+			return nil, -1, err
+		}
+		rName, rEnd, err := decodeDomainName(record, mEnd+1)
+		if err != nil {
+			return nil, -1, err
+		}
+		if rEnd+1+20 > rdataEnd {
+			return nil, -1, errors.New("Invalid SOA record")
+		}
+		fields := record[rEnd+1 : rEnd+1+20]
+		return SOARecord{
+			DNSRecordPreamble: recordPreamble,
+			MName:             mName,
+			RName:             rName,
+			Serial:            binary.BigEndian.Uint32(fields[0:4]),
+			Refresh:           binary.BigEndian.Uint32(fields[4:8]),
+			Retry:             binary.BigEndian.Uint32(fields[8:12]),
+			Expire:            binary.BigEndian.Uint32(fields[12:16]),
+			MinimumTTL:        binary.BigEndian.Uint32(fields[16:20]),
+		}, rdataEnd, nil
 	case uint16(RType.OPT): // OPT record
 		if domainName != "." {
 			return nil, -1, errors.New("Invalid OPT record domain name")
@@ -191,7 +230,7 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 			if i+4+int(optionLength) > len(rdata) {
 				return nil, -1, errors.New("Invalid OPT record option length")
 			}
-			optionData := rdata[i+4 : i+4+int(optionLength)]
+			optionData := append([]byte(nil), rdata[i+4:i+4+int(optionLength)]...)
 			i += 4 + int(optionLength)
 			options = append(options, EDNSOption{
 				Code: optionCode,
@@ -205,10 +244,22 @@ func parseRecord(record []byte, start int) (DNSRecord, int, error) {
 			ExtRCODE: uint8((ttl & 0xFF000000) >> 24),
 			Version:  uint8((ttl & 0x00FF0000) >> 16),
 			DO:       (ttl & 0x00008000) != 0,
-			Z:        uint16((ttl & 0x00007FFF) >> 15),
+			Z:        uint16(ttl & 0x00007FFF),
 			Options:  options,
 		}, end + 11 + int(rdLength), nil
 	default:
-		return nil, -1, errors.New("Unknown record type")
+		// Keep records of types we don't decode as opaque RDATA (RFC 3597) so
+		// a single unfamiliar record doesn't make the whole packet unusable.
+		data := make([]byte, len(rdata))
+		copy(data, rdata)
+		return UnknownRecord{DNSRecordPreamble: recordPreamble, Data: data}, end + 11 + int(rdLength), nil
 	}
+}
+
+// fixedRDataLength is the minimum RDATA length for record types whose parsers
+// index into RDATA directly.
+var fixedRDataLength = map[RecordType]int{
+	RType.A:    4,
+	RType.AAAA: 16,
+	RType.MX:   2,
 }
