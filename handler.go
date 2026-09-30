@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -66,7 +67,7 @@ func handlePacket(queryBuffer []byte, cache *DNSCache) (dns.DNSPacket, error) {
 
 	responsePacket := dns.DNSPacket{Header: responseHeader, Questions: dnsQuery.Questions}
 
-	answers, soaRecords, err := resolve(getRandomDNSServer(RootServers), question.Domain, question.Type, 0)
+	answers, soaRecords, err := resolve(getRandomDNSServer(RootServers, 0), question.Domain, question.Type, 0)
 	if err != nil {
 		log.Println("Failed to resolve DNS query:", err)
 		if rescodeErr, ok := err.(RESCODEError); ok && rescodeErr.Code == dns.DNSResponseCodeType.NameError {
@@ -103,13 +104,17 @@ func queryOverTCP(dnsServer net.IP, query dns.DNSPacket) ([]byte, error) {
 
 	dnsServerAddr := &net.TCPAddr{
 		IP:   dnsServer,
-		Port: 53,
+		Port: upstreamPort,
 	}
 	conn, err := net.DialTCP("tcp", nil, dnsServerAddr)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(upstreamTimeout)); err != nil {
+		return nil, err
+	}
 
 	queryBuffer, err := query.ToBytes()
 	if err != nil {
@@ -148,7 +153,7 @@ func query(dnsServerAddr net.IP, query dns.DNSPacket) (*dns.DNSPacket, error) {
 
 	dnsServer := net.UDPAddr{
 		IP:   dnsServerAddr,
-		Port: 53,
+		Port: upstreamPort,
 	}
 
 	var localAddress = &net.UDPAddr{
@@ -179,7 +184,7 @@ func query(dnsServerAddr net.IP, query dns.DNSPacket) (*dns.DNSPacket, error) {
 		return nil, err
 	}
 
-	if err = forwardConn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	if err = forwardConn.SetDeadline(time.Now().Add(upstreamTimeout)); err != nil {
 		log.Println("Failed to set deadline on forward connection:", err)
 	}
 
@@ -191,7 +196,7 @@ func query(dnsServerAddr net.IP, query dns.DNSPacket) (*dns.DNSPacket, error) {
 
 	parsedResponse, err := dns.ParseDNSPacket(buf[:n2], n2)
 	if err != nil {
-		if err.Error() == "Truncated DNS packet" {
+		if errors.Is(err, dns.ErrTruncated) {
 			newPacketBytes, err := queryOverTCP(dnsServerAddr, query)
 			if err != nil {
 				log.Println("Error querying DNS server over TCP:", err)
@@ -208,10 +213,46 @@ func query(dnsServerAddr net.IP, query dns.DNSPacket) (*dns.DNSPacket, error) {
 		}
 	}
 
+	if err := validateResponse(query, parsedResponse); err != nil {
+		return nil, err
+	}
+
 	return parsedResponse, nil
 }
 
-func getRandomDNSServer(servers map[string][]net.IP) net.IP {
+// upstreamPort is the port queried on upstream nameservers. It is a variable so
+// tests can point query at a local fake server.
+var upstreamPort = 53
+
+// upstreamTimeout bounds each UDP or TCP exchange with an upstream server.
+const upstreamTimeout = 10 * time.Second
+
+// validateResponse rejects responses that don't answer the query we sent, such
+// as spoofed or stale packets with the wrong ID or question.
+func validateResponse(query dns.DNSPacket, response *dns.DNSPacket) error {
+	if response.Header.QR != 1 {
+		return errors.New("upstream packet is not a response")
+	}
+	if response.Header.ID != query.Header.ID {
+		return fmt.Errorf("upstream response ID %d does not match query ID %d", response.Header.ID, query.Header.ID)
+	}
+	if len(response.Questions) == 0 && response.Header.RCODE != dns.DNSResponseCodeType.NoError {
+		// Some servers omit the question section in error responses.
+		return nil
+	}
+	if len(response.Questions) != 1 {
+		return fmt.Errorf("upstream response has %d questions, want 1", len(response.Questions))
+	}
+	got, want := response.Questions[0], query.Questions[0]
+	if !strings.EqualFold(got.Domain, want.Domain) || got.Type != want.Type || got.Class != want.Class {
+		return fmt.Errorf("upstream response is for %s %s, want %s %s", got.Domain, got.Type, want.Domain, want.Type)
+	}
+	return nil
+}
+
+// getRandomDNSServer picks a random server from servers, resolving its address
+// first if no glue was provided. depth is the recursion depth of the caller.
+func getRandomDNSServer(servers map[string][]net.IP, depth uint) net.IP {
 	keys := make([]string, 0, len(servers))
 	for k := range servers {
 		keys = append(keys, k)
@@ -221,7 +262,7 @@ func getRandomDNSServer(servers map[string][]net.IP) net.IP {
 	server := servers[serverDomain]
 
 	if len(server) == 0 {
-		packets, _, err := resolve(getRandomDNSServer(RootServers), serverDomain, dns.RType.A, 0)
+		packets, _, err := resolve(getRandomDNSServer(RootServers, depth+1), serverDomain, dns.RType.A, depth+1)
 		if err != nil {
 			log.Println("Failed to resolve nameserver domain:", err)
 			return nil
@@ -268,6 +309,9 @@ var sendQuery = query
 func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth uint) ([]dns.DNSRecord, []dns.DNSRecord, error) {
 	if depth >= 10 {
 		return nil, nil, errors.New("resolution depth limit exceeded")
+	}
+	if dnsServer == nil {
+		return nil, nil, errors.New("no nameserver address to query for domain: " + domain)
 	}
 	dnsQueryPacket := dns.DNSPacket{
 		Header: dns.DNSHeader{
@@ -328,7 +372,7 @@ func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth u
 
 	if len(chain) > 0 {
 		// The target may live in a different zone, so resolve it from the root.
-		resolved, soaRecords, err := resolve(getRandomDNSServer(RootServers), name, recordType, depth+1)
+		resolved, soaRecords, err := resolve(getRandomDNSServer(RootServers, depth+1), name, recordType, depth+1)
 		if err != nil {
 			return nil, soaRecords, err
 		}
@@ -366,7 +410,7 @@ func resolve(dnsServer net.IP, domain string, recordType dns.RecordType, depth u
 		}
 	}
 
-	nextDNSServer := getRandomDNSServer(nsServers)
+	nextDNSServer := getRandomDNSServer(nsServers, depth+1)
 	if nextDNSServer == nil {
 		return nil, nil, errors.New("no valid nameservers found for domain: " + domain)
 	}

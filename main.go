@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"time"
@@ -37,8 +36,6 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-
-		fmt.Println(responsePacket)
 		return responsePacket.ToBytes()
 	})
 }
